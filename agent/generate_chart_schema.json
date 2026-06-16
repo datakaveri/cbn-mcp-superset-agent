@@ -1,0 +1,2414 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request": {
+      "properties": {
+        "use_cache": {
+          "default": true,
+          "description": "Use cache if available",
+          "type": "boolean"
+        },
+        "force_refresh": {
+          "default": false,
+          "description": "Invalidate cache and fetch fresh data",
+          "type": "boolean"
+        },
+        "cache_timeout": {
+          "type": "integer",
+          "description": "Cache timeout override in seconds (0 to disable)",
+          "default": null
+        },
+        "dataset_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "Dataset identifier (ID, UUID)"
+        },
+        "config": {
+          "description": "Chart configuration",
+          "oneOf": [
+            {
+              "properties": {
+                "chart_type": {
+                  "const": "xy",
+                  "default": "xy",
+                  "type": "string"
+                },
+                "x": {
+                  "properties": {
+                    "name": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                      "type": "string",
+                      "default": null
+                    },
+                    "label": {
+                      "maxLength": 500,
+                      "type": "string",
+                      "default": null
+                    },
+                    "dtype": {
+                      "type": "string",
+                      "default": null
+                    },
+                    "aggregate": {
+                      "enum": [
+                        "SUM",
+                        "COUNT",
+                        "AVG",
+                        "MIN",
+                        "MAX",
+                        "COUNT_DISTINCT",
+                        "STDDEV",
+                        "VAR",
+                        "MEDIAN",
+                        "PERCENTILE"
+                      ],
+                      "type": "string",
+                      "description": "SQL aggregate function",
+                      "default": null
+                    },
+                    "saved_metric": {
+                      "default": false,
+                      "description": "If true, 'name' refers to a saved metric from the dataset (use get_dataset_info to see available metrics). When set, 'aggregate' is ignored.",
+                      "type": "boolean"
+                    },
+                    "sql_expression": {
+                      "maxLength": 2000,
+                      "type": "string",
+                      "description": "Custom SQL aggregate expression for an adhoc metric, e.g. 'COUNT(CASE WHEN closed_won THEN 1 END)::numeric / NULLIF(COUNT(*),0)'. Metric-only \u00e2\u0080\u0094 mutually exclusive with 'name', 'aggregate', and 'saved_metric'. Requires 'label'.",
+                      "default": null
+                    }
+                  },
+                  "type": "object",
+                  "description": "X-axis column. If omitted, defaults to the dataset's primary datetime column (main_dttm_col).",
+                  "default": null
+                },
+                "y": {
+                  "description": "Y-axis metrics (unique labels)",
+                  "items": {
+                    "properties": {
+                      "name": {
+                        "maxLength": 255,
+                        "minLength": 1,
+                        "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                        "type": "string",
+                        "default": null
+                      },
+                      "label": {
+                        "maxLength": 500,
+                        "type": "string",
+                        "default": null
+                      },
+                      "dtype": {
+                        "type": "string",
+                        "default": null
+                      },
+                      "aggregate": {
+                        "enum": [
+                          "SUM",
+                          "COUNT",
+                          "AVG",
+                          "MIN",
+                          "MAX",
+                          "COUNT_DISTINCT",
+                          "STDDEV",
+                          "VAR",
+                          "MEDIAN",
+                          "PERCENTILE"
+                        ],
+                        "type": "string",
+                        "description": "SQL aggregate function",
+                        "default": null
+                      },
+                      "saved_metric": {
+                        "default": false,
+                        "description": "If true, 'name' refers to a saved metric from the dataset (use get_dataset_info to see available metrics). When set, 'aggregate' is ignored.",
+                        "type": "boolean"
+                      },
+                      "sql_expression": {
+                        "maxLength": 2000,
+                        "type": "string",
+                        "description": "Custom SQL aggregate expression for an adhoc metric, e.g. 'COUNT(CASE WHEN closed_won THEN 1 END)::numeric / NULLIF(COUNT(*),0)'. Metric-only \u00e2\u0080\u0094 mutually exclusive with 'name', 'aggregate', and 'saved_metric'. Requires 'label'.",
+                        "default": null
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "kind": {
+                  "default": "line",
+                  "enum": [
+                    "line",
+                    "bar",
+                    "area",
+                    "scatter"
+                  ],
+                  "type": "string"
+                },
+                "time_grain": {
+                  "enum": [
+                    "PT1S",
+                    "PT5S",
+                    "PT30S",
+                    "PT1M",
+                    "PT5M",
+                    "PT10M",
+                    "PT15M",
+                    "PT30M",
+                    "PT0.5H",
+                    "PT1H",
+                    "PT6H",
+                    "P1D",
+                    "P1W",
+                    "1969-12-28T00:00:00Z/P1W",
+                    "1969-12-29T00:00:00Z/P1W",
+                    "P1W/1970-01-03T00:00:00Z",
+                    "P1W/1970-01-04T00:00:00Z",
+                    "P1M",
+                    "P3M",
+                    "P0.25Y",
+                    "P1Y"
+                  ],
+                  "type": "string",
+                  "description": "PT1S, PT1M, PT1H, P1D, P1W, P1M, P3M, P1Y",
+                  "default": null
+                },
+                "orientation": {
+                  "enum": [
+                    "vertical",
+                    "horizontal"
+                  ],
+                  "type": "string",
+                  "description": "Bar orientation (only for kind='bar')",
+                  "default": null
+                },
+                "stacked": {
+                  "default": false,
+                  "type": "boolean"
+                },
+                "group_by": {
+                  "items": {
+                    "properties": {
+                      "name": {
+                        "maxLength": 255,
+                        "minLength": 1,
+                        "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                        "type": "string",
+                        "default": null
+                      },
+                      "label": {
+                        "maxLength": 500,
+                        "type": "string",
+                        "default": null
+                      },
+                      "dtype": {
+                        "type": "string",
+                        "default": null
+                      },
+                      "aggregate": {
+                        "enum": [
+                          "SUM",
+                          "COUNT",
+                          "AVG",
+                          "MIN",
+                          "MAX",
+                          "COUNT_DISTINCT",
+                          "STDDEV",
+                          "VAR",
+                          "MEDIAN",
+                          "PERCENTILE"
+                        ],
+                        "type": "string",
+                        "description": "SQL aggregate function",
+                        "default": null
+                      },
+                      "saved_metric": {
+                        "default": false,
+                        "description": "If true, 'name' refers to a saved metric from the dataset (use get_dataset_info to see available metrics). When set, 'aggregate' is ignored.",
+                        "type": "boolean"
+                      },
+                      "sql_expression": {
+                        "maxLength": 2000,
+                        "type": "string",
+                        "description": "Custom SQL aggregate expression for an adhoc metric, e.g. 'COUNT(CASE WHEN closed_won THEN 1 END)::numeric / NULLIF(COUNT(*),0)'. Metric-only \u00e2\u0080\u0094 mutually exclusive with 'name', 'aggregate', and 'saved_metric'. Requires 'label'.",
+                        "default": null
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "description": "Series breakdown columns",
+                  "default": null
+                },
+                "x_axis": {
+                  "properties": {
+                    "title": {
+                      "maxLength": 200,
+                      "type": "string",
+                      "default": null
+                    },
+                    "scale": {
+                      "enum": [
+                        "linear",
+                        "log"
+                      ],
+                      "type": "string",
+                      "default": "linear"
+                    },
+                    "format": {
+                      "maxLength": 50,
+                      "type": "string",
+                      "description": "e.g. '$,.2f'",
+                      "default": null
+                    }
+                  },
+                  "type": "object",
+                  "default": null
+                },
+                "y_axis": {
+                  "properties": {
+                    "title": {
+                      "maxLength": 200,
+                      "type": "string",
+                      "default": null
+                    },
+                    "scale": {
+                      "enum": [
+                        "linear",
+                        "log"
+                      ],
+                      "type": "string",
+                      "default": "linear"
+                    },
+                    "format": {
+                      "maxLength": 50,
+                      "type": "string",
+                      "description": "e.g. '$,.2f'",
+                      "default": null
+                    }
+                  },
+                  "type": "object",
+                  "default": null
+                },
+                "legend": {
+                  "properties": {
+                    "show": {
+                      "default": true,
+                      "type": "boolean"
+                    },
+                    "position": {
+                      "enum": [
+                        "top",
+                        "bottom",
+                        "left",
+                        "right"
+                      ],
+                      "type": "string",
+                      "default": "right"
+                    }
+                  },
+                  "type": "object",
+                  "default": null
+                },
+                "x_axis_time_format": {
+                  "maxLength": 50,
+                  "type": "string",
+                  "description": "Date format for temporal x-axis labels (e.g. 'smart_date', '%Y-%m-%d'). Only applies when the x-axis column is temporal.",
+                  "default": null
+                },
+                "show_value": {
+                  "default": false,
+                  "description": "Show data labels on each data point",
+                  "type": "boolean"
+                },
+                "currency_format": {
+                  "description": "Currency symbol and placement applied to numeric values.",
+                  "properties": {
+                    "symbol": {
+                      "description": "Currency code or symbol (e.g. 'USD', 'EUR', '$', '\u00e2\u0082\u00ac')",
+                      "maxLength": 20,
+                      "type": "string"
+                    },
+                    "symbol_position": {
+                      "default": "prefix",
+                      "description": "Whether to render the symbol before or after the value",
+                      "enum": [
+                        "prefix",
+                        "suffix"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "symbol"
+                  ],
+                  "type": "object",
+                  "default": null
+                },
+                "color_scheme": {
+                  "maxLength": 100,
+                  "type": "string",
+                  "description": "Superset color scheme ID (e.g. 'supersetColors', 'lyftColors', 'googleCategory10c', 'd3Category10'). When omitted, Superset's default scheme is used.",
+                  "default": null
+                },
+                "filters": {
+                  "items": {
+                    "properties": {
+                      "column": {
+                        "maxLength": 255,
+                        "minLength": 1,
+                        "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                        "type": "string"
+                      },
+                      "op": {
+                        "description": "LIKE/ILIKE use % wildcards. IN/NOT IN take a list.",
+                        "enum": [
+                          "=",
+                          ">",
+                          "<",
+                          ">=",
+                          "<=",
+                          "!=",
+                          "LIKE",
+                          "ILIKE",
+                          "NOT LIKE",
+                          "IN",
+                          "NOT IN"
+                        ],
+                        "type": "string"
+                      },
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                }
+                              ]
+                            },
+                            "type": "array"
+                          }
+                        ],
+                        "description": "For IN/NOT IN, provide a list."
+                      }
+                    },
+                    "required": [
+                      "column",
+                      "op",
+                      "value"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "description": "Structured filters (column/op/value). Do NOT use adhoc_filters or raw SQL expressions.",
+                  "default": null
+                },
+                "row_limit": {
+                  "default": 10000,
+                  "description": "Max data points",
+                  "maximum": 50000,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "series_limit": {
+                  "maximum": 10000,
+                  "minimum": 1,
+                  "type": "integer",
+                  "description": "Max number of series to show when group_by is set. Limits the distinct values rendered as separate lines/bars. Only applies when group_by is specified.",
+                  "default": null
+                }
+              },
+              "required": [
+                "y"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "chart_type": {
+                  "const": "table",
+                  "default": "table",
+                  "type": "string"
+                },
+                "viz_type": {
+                  "default": "table",
+                  "description": "'ag-grid-table' for interactive features",
+                  "enum": [
+                    "table",
+                    "ag-grid-table"
+                  ],
+                  "type": "string"
+                },
+                "query_mode": {
+                  "enum": [
+                    "aggregate",
+                    "raw"
+                  ],
+                  "type": "string",
+                  "description": "Query mode: 'raw' returns individual rows without aggregation, 'aggregate' groups data using metrics. When set to 'raw', all columns are treated as plain columns regardless of any aggregate settings. Defaults to auto-detection: 'raw' if no column has an aggregate function, 'aggregate' otherwise.",
+                  "default": null
+                },
+                "columns": {
+                  "description": "Columns with unique labels",
+                  "items": {
+                    "properties": {
+                      "name": {
+                        "maxLength": 255,
+                        "minLength": 1,
+                        "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                        "type": "string",
+                        "default": null
+                      },
+                      "label": {
+                        "maxLength": 500,
+                        "type": "string",
+                        "default": null
+                      },
+                      "dtype": {
+                        "type": "string",
+                        "default": null
+                      },
+                      "aggregate": {
+                        "enum": [
+                          "SUM",
+                          "COUNT",
+                          "AVG",
+                          "MIN",
+                          "MAX",
+                          "COUNT_DISTINCT",
+                          "STDDEV",
+                          "VAR",
+                          "MEDIAN",
+                          "PERCENTILE"
+                        ],
+                        "type": "string",
+                        "description": "SQL aggregate function",
+                        "default": null
+                      },
+                      "saved_metric": {
+                        "default": false,
+                        "description": "If true, 'name' refers to a saved metric from the dataset (use get_dataset_info to see available metrics). When set, 'aggregate' is ignored.",
+                        "type": "boolean"
+                      },
+                      "sql_expression": {
+                        "maxLength": 2000,
+                        "type": "string",
+                        "description": "Custom SQL aggregate expression for an adhoc metric, e.g. 'COUNT(CASE WHEN closed_won THEN 1 END)::numeric / NULLIF(COUNT(*),0)'. Metric-only \u00e2\u0080\u0094 mutually exclusive with 'name', 'aggregate', and 'saved_metric'. Requires 'label'.",
+                        "default": null
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "filters": {
+                  "items": {
+                    "properties": {
+                      "column": {
+                        "maxLength": 255,
+                        "minLength": 1,
+                        "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                        "type": "string"
+                      },
+                      "op": {
+                        "description": "LIKE/ILIKE use % wildcards. IN/NOT IN take a list.",
+                        "enum": [
+                          "=",
+                          ">",
+                          "<",
+                          ">=",
+                          "<=",
+                          "!=",
+                          "LIKE",
+                          "ILIKE",
+                          "NOT LIKE",
+                          "IN",
+                          "NOT IN"
+                        ],
+                        "type": "string"
+                      },
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                }
+                              ]
+                            },
+                            "type": "array"
+                          }
+                        ],
+                        "description": "For IN/NOT IN, provide a list."
+                      }
+                    },
+                    "required": [
+                      "column",
+                      "op",
+                      "value"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "description": "Structured filters (column/op/value). Do NOT use adhoc_filters or raw SQL expressions.",
+                  "default": null
+                },
+                "sort_by": {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "description": "Sort specification with explicit direction.\n\nAccepts either this object or a bare column-name string in `sort_by`\nlists. Bare strings default to descending, which matches the\nsort-by-metric \"top N\" pattern most commonly used for tables.",
+                        "properties": {
+                          "column": {
+                            "description": "Column to sort by",
+                            "maxLength": 255,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "ascending": {
+                            "default": false,
+                            "description": "Sort ascending. Defaults to False (descending) to match the typical sort-by-metric top-N use case.",
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "column"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "type": "array",
+                  "description": "Columns to sort by. Each entry is either a column-name string (defaults to descending) or a SortByConfig object with explicit `ascending`. Descending matches the sort-by-metric top-N pattern most common for tables.",
+                  "default": null
+                },
+                "row_limit": {
+                  "default": 1000,
+                  "description": "Max rows returned",
+                  "maximum": 50000,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "color_scheme": {
+                  "maxLength": 100,
+                  "type": "string",
+                  "description": "Superset color scheme ID applied to conditional/cell formatting (e.g. 'supersetColors').",
+                  "default": null
+                }
+              },
+              "required": [
+                "columns"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "chart_type": {
+                  "const": "pie",
+                  "default": "pie",
+                  "type": "string"
+                },
+                "dimension": {
+                  "properties": {
+                    "name": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                      "type": "string",
+                      "default": null
+                    },
+                    "label": {
+                      "maxLength": 500,
+                      "type": "string",
+                      "default": null
+                    },
+                    "dtype": {
+                      "type": "string",
+                      "default": null
+                    },
+                    "aggregate": {
+                      "enum": [
+                        "SUM",
+                        "COUNT",
+                        "AVG",
+                        "MIN",
+                        "MAX",
+                        "COUNT_DISTINCT",
+                        "STDDEV",
+                        "VAR",
+                        "MEDIAN",
+                        "PERCENTILE"
+                      ],
+                      "type": "string",
+                      "description": "SQL aggregate function",
+                      "default": null
+                    },
+                    "saved_metric": {
+                      "default": false,
+                      "description": "If true, 'name' refers to a saved metric from the dataset (use get_dataset_info to see available metrics). When set, 'aggregate' is ignored.",
+                      "type": "boolean"
+                    },
+                    "sql_expression": {
+                      "maxLength": 2000,
+                      "type": "string",
+                      "description": "Custom SQL aggregate expression for an adhoc metric, e.g. 'COUNT(CASE WHEN closed_won THEN 1 END)::numeric / NULLIF(COUNT(*),0)'. Metric-only \u00e2\u0080\u0094 mutually exclusive with 'name', 'aggregate', and 'saved_metric'. Requires 'label'.",
+                      "default": null
+                    }
+                  },
+                  "type": "object",
+                  "description": "Category column for slices"
+                },
+                "metric": {
+                  "properties": {
+                    "name": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                      "type": "string",
+                      "default": null
+                    },
+                    "label": {
+                      "maxLength": 500,
+                      "type": "string",
+                      "default": null
+                    },
+                    "dtype": {
+                      "type": "string",
+                      "default": null
+                    },
+                    "aggregate": {
+                      "enum": [
+                        "SUM",
+                        "COUNT",
+                        "AVG",
+                        "MIN",
+                        "MAX",
+                        "COUNT_DISTINCT",
+                        "STDDEV",
+                        "VAR",
+                        "MEDIAN",
+                        "PERCENTILE"
+                      ],
+                      "type": "string",
+                      "description": "SQL aggregate function",
+                      "default": null
+                    },
+                    "saved_metric": {
+                      "default": false,
+                      "description": "If true, 'name' refers to a saved metric from the dataset (use get_dataset_info to see available metrics). When set, 'aggregate' is ignored.",
+                      "type": "boolean"
+                    },
+                    "sql_expression": {
+                      "maxLength": 2000,
+                      "type": "string",
+                      "description": "Custom SQL aggregate expression for an adhoc metric, e.g. 'COUNT(CASE WHEN closed_won THEN 1 END)::numeric / NULLIF(COUNT(*),0)'. Metric-only \u00e2\u0080\u0094 mutually exclusive with 'name', 'aggregate', and 'saved_metric'. Requires 'label'.",
+                      "default": null
+                    }
+                  },
+                  "type": "object",
+                  "description": "Value metric (use aggregate e.g. SUM, COUNT for ad-hoc, or set saved_metric=True for a saved dataset metric)"
+                },
+                "donut": {
+                  "default": false,
+                  "type": "boolean"
+                },
+                "show_labels": {
+                  "default": true,
+                  "type": "boolean"
+                },
+                "label_type": {
+                  "default": "key_value_percent",
+                  "enum": [
+                    "key",
+                    "value",
+                    "percent",
+                    "key_value",
+                    "key_percent",
+                    "key_value_percent",
+                    "value_percent"
+                  ],
+                  "type": "string"
+                },
+                "sort_by_metric": {
+                  "default": true,
+                  "type": "boolean"
+                },
+                "show_legend": {
+                  "default": true,
+                  "type": "boolean"
+                },
+                "filters": {
+                  "items": {
+                    "properties": {
+                      "column": {
+                        "maxLength": 255,
+                        "minLength": 1,
+                        "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                        "type": "string"
+                      },
+                      "op": {
+                        "description": "LIKE/ILIKE use % wildcards. IN/NOT IN take a list.",
+                        "enum": [
+                          "=",
+                          ">",
+                          "<",
+                          ">=",
+                          "<=",
+                          "!=",
+                          "LIKE",
+                          "ILIKE",
+                          "NOT LIKE",
+                          "IN",
+                          "NOT IN"
+                        ],
+                        "type": "string"
+                      },
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                }
+                              ]
+                            },
+                            "type": "array"
+                          }
+                        ],
+                        "description": "For IN/NOT IN, provide a list."
+                      }
+                    },
+                    "required": [
+                      "column",
+                      "op",
+                      "value"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "description": "Structured filters (column/op/value). Do NOT use adhoc_filters or raw SQL expressions.",
+                  "default": null
+                },
+                "row_limit": {
+                  "default": 100,
+                  "description": "Max slices",
+                  "maximum": 10000,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "number_format": {
+                  "default": "SMART_NUMBER",
+                  "maxLength": 50,
+                  "type": "string"
+                },
+                "date_format": {
+                  "default": "smart_date",
+                  "description": "Date format for date dimension labels (e.g. 'smart_date', '%Y-%m-%d')",
+                  "maxLength": 50,
+                  "type": "string"
+                },
+                "currency_format": {
+                  "description": "Currency symbol and placement applied to numeric values.",
+                  "properties": {
+                    "symbol": {
+                      "description": "Currency code or symbol (e.g. 'USD', 'EUR', '$', '\u00e2\u0082\u00ac')",
+                      "maxLength": 20,
+                      "type": "string"
+                    },
+                    "symbol_position": {
+                      "default": "prefix",
+                      "description": "Whether to render the symbol before or after the value",
+                      "enum": [
+                        "prefix",
+                        "suffix"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "symbol"
+                  ],
+                  "type": "object",
+                  "default": null
+                },
+                "color_scheme": {
+                  "maxLength": 100,
+                  "type": "string",
+                  "description": "Superset color scheme ID (e.g. 'supersetColors', 'lyftColors', 'googleCategory10c', 'd3Category10'). Defaults to 'supersetColors'.",
+                  "default": null
+                },
+                "legend_orientation": {
+                  "default": "top",
+                  "description": "Legend placement around the chart",
+                  "enum": [
+                    "top",
+                    "bottom",
+                    "left",
+                    "right"
+                  ],
+                  "type": "string"
+                },
+                "show_total": {
+                  "default": false,
+                  "description": "Show total in center",
+                  "type": "boolean"
+                },
+                "labels_outside": {
+                  "default": true,
+                  "type": "boolean"
+                },
+                "outer_radius": {
+                  "default": 70,
+                  "description": "Outer radius % (1-100)",
+                  "maximum": 100,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "inner_radius": {
+                  "default": 30,
+                  "description": "Donut inner radius % (1-100)",
+                  "maximum": 100,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "dimension",
+                "metric"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "chart_type": {
+                  "const": "pivot_table",
+                  "default": "pivot_table",
+                  "type": "string"
+                },
+                "rows": {
+                  "description": "Row grouping columns",
+                  "items": {
+                    "properties": {
+                      "name": {
+                        "maxLength": 255,
+                        "minLength": 1,
+                        "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                        "type": "string",
+                        "default": null
+                      },
+                      "label": {
+                        "maxLength": 500,
+                        "type": "string",
+                        "default": null
+                      },
+                      "dtype": {
+                        "type": "string",
+                        "default": null
+                      },
+                      "aggregate": {
+                        "enum": [
+                          "SUM",
+                          "COUNT",
+                          "AVG",
+                          "MIN",
+                          "MAX",
+                          "COUNT_DISTINCT",
+                          "STDDEV",
+                          "VAR",
+                          "MEDIAN",
+                          "PERCENTILE"
+                        ],
+                        "type": "string",
+                        "description": "SQL aggregate function",
+                        "default": null
+                      },
+                      "saved_metric": {
+                        "default": false,
+                        "description": "If true, 'name' refers to a saved metric from the dataset (use get_dataset_info to see available metrics). When set, 'aggregate' is ignored.",
+                        "type": "boolean"
+                      },
+                      "sql_expression": {
+                        "maxLength": 2000,
+                        "type": "string",
+                        "description": "Custom SQL aggregate expression for an adhoc metric, e.g. 'COUNT(CASE WHEN closed_won THEN 1 END)::numeric / NULLIF(COUNT(*),0)'. Metric-only \u00e2\u0080\u0094 mutually exclusive with 'name', 'aggregate', and 'saved_metric'. Requires 'label'.",
+                        "default": null
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "columns": {
+                  "items": {
+                    "properties": {
+                      "name": {
+                        "maxLength": 255,
+                        "minLength": 1,
+                        "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                        "type": "string",
+                        "default": null
+                      },
+                      "label": {
+                        "maxLength": 500,
+                        "type": "string",
+                        "default": null
+                      },
+                      "dtype": {
+                        "type": "string",
+                        "default": null
+                      },
+                      "aggregate": {
+                        "enum": [
+                          "SUM",
+                          "COUNT",
+                          "AVG",
+                          "MIN",
+                          "MAX",
+                          "COUNT_DISTINCT",
+                          "STDDEV",
+                          "VAR",
+                          "MEDIAN",
+                          "PERCENTILE"
+                        ],
+                        "type": "string",
+                        "description": "SQL aggregate function",
+                        "default": null
+                      },
+                      "saved_metric": {
+                        "default": false,
+                        "description": "If true, 'name' refers to a saved metric from the dataset (use get_dataset_info to see available metrics). When set, 'aggregate' is ignored.",
+                        "type": "boolean"
+                      },
+                      "sql_expression": {
+                        "maxLength": 2000,
+                        "type": "string",
+                        "description": "Custom SQL aggregate expression for an adhoc metric, e.g. 'COUNT(CASE WHEN closed_won THEN 1 END)::numeric / NULLIF(COUNT(*),0)'. Metric-only \u00e2\u0080\u0094 mutually exclusive with 'name', 'aggregate', and 'saved_metric'. Requires 'label'.",
+                        "default": null
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "description": "Column groups for cross-tabulation",
+                  "default": null
+                },
+                "metrics": {
+                  "description": "Metrics (use aggregate e.g. SUM, COUNT, AVG for ad-hoc, or set saved_metric=True for saved dataset metrics)",
+                  "items": {
+                    "properties": {
+                      "name": {
+                        "maxLength": 255,
+                        "minLength": 1,
+                        "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                        "type": "string",
+                        "default": null
+                      },
+                      "label": {
+                        "maxLength": 500,
+                        "type": "string",
+                        "default": null
+                      },
+                      "dtype": {
+                        "type": "string",
+                        "default": null
+                      },
+                      "aggregate": {
+                        "enum": [
+                          "SUM",
+                          "COUNT",
+                          "AVG",
+                          "MIN",
+                          "MAX",
+                          "COUNT_DISTINCT",
+                          "STDDEV",
+                          "VAR",
+                          "MEDIAN",
+                          "PERCENTILE"
+                        ],
+                        "type": "string",
+                        "description": "SQL aggregate function",
+                        "default": null
+                      },
+                      "saved_metric": {
+                        "default": false,
+                        "description": "If true, 'name' refers to a saved metric from the dataset (use get_dataset_info to see available metrics). When set, 'aggregate' is ignored.",
+                        "type": "boolean"
+                      },
+                      "sql_expression": {
+                        "maxLength": 2000,
+                        "type": "string",
+                        "description": "Custom SQL aggregate expression for an adhoc metric, e.g. 'COUNT(CASE WHEN closed_won THEN 1 END)::numeric / NULLIF(COUNT(*),0)'. Metric-only \u00e2\u0080\u0094 mutually exclusive with 'name', 'aggregate', and 'saved_metric'. Requires 'label'.",
+                        "default": null
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "aggregate_function": {
+                  "default": "Sum",
+                  "enum": [
+                    "Sum",
+                    "Average",
+                    "Median",
+                    "Sample Variance",
+                    "Sample Standard Deviation",
+                    "Minimum",
+                    "Maximum",
+                    "Count",
+                    "Count Unique Values",
+                    "First",
+                    "Last"
+                  ],
+                  "type": "string"
+                },
+                "show_row_totals": {
+                  "default": true,
+                  "type": "boolean"
+                },
+                "show_column_totals": {
+                  "default": true,
+                  "type": "boolean"
+                },
+                "transpose": {
+                  "default": false,
+                  "type": "boolean"
+                },
+                "combine_metric": {
+                  "default": false,
+                  "description": "Metrics side by side in columns",
+                  "type": "boolean"
+                },
+                "filters": {
+                  "items": {
+                    "properties": {
+                      "column": {
+                        "maxLength": 255,
+                        "minLength": 1,
+                        "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                        "type": "string"
+                      },
+                      "op": {
+                        "description": "LIKE/ILIKE use % wildcards. IN/NOT IN take a list.",
+                        "enum": [
+                          "=",
+                          ">",
+                          "<",
+                          ">=",
+                          "<=",
+                          "!=",
+                          "LIKE",
+                          "ILIKE",
+                          "NOT LIKE",
+                          "IN",
+                          "NOT IN"
+                        ],
+                        "type": "string"
+                      },
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                }
+                              ]
+                            },
+                            "type": "array"
+                          }
+                        ],
+                        "description": "For IN/NOT IN, provide a list."
+                      }
+                    },
+                    "required": [
+                      "column",
+                      "op",
+                      "value"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "description": "Structured filters (column/op/value). Do NOT use adhoc_filters or raw SQL expressions.",
+                  "default": null
+                },
+                "row_limit": {
+                  "default": 10000,
+                  "description": "Max cells",
+                  "maximum": 50000,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "value_format": {
+                  "default": "SMART_NUMBER",
+                  "maxLength": 50,
+                  "type": "string"
+                },
+                "date_format": {
+                  "maxLength": 50,
+                  "type": "string",
+                  "description": "Date format for date columns (e.g. 'smart_date', '%Y-%m-%d')",
+                  "default": null
+                },
+                "currency_format": {
+                  "description": "Currency symbol and placement applied to numeric values.",
+                  "properties": {
+                    "symbol": {
+                      "description": "Currency code or symbol (e.g. 'USD', 'EUR', '$', '\u00e2\u0082\u00ac')",
+                      "maxLength": 20,
+                      "type": "string"
+                    },
+                    "symbol_position": {
+                      "default": "prefix",
+                      "description": "Whether to render the symbol before or after the value",
+                      "enum": [
+                        "prefix",
+                        "suffix"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "symbol"
+                  ],
+                  "type": "object",
+                  "default": null
+                }
+              },
+              "required": [
+                "rows",
+                "metrics"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "chart_type": {
+                  "const": "mixed_timeseries",
+                  "default": "mixed_timeseries",
+                  "type": "string"
+                },
+                "x": {
+                  "properties": {
+                    "name": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                      "type": "string",
+                      "default": null
+                    },
+                    "label": {
+                      "maxLength": 500,
+                      "type": "string",
+                      "default": null
+                    },
+                    "dtype": {
+                      "type": "string",
+                      "default": null
+                    },
+                    "aggregate": {
+                      "enum": [
+                        "SUM",
+                        "COUNT",
+                        "AVG",
+                        "MIN",
+                        "MAX",
+                        "COUNT_DISTINCT",
+                        "STDDEV",
+                        "VAR",
+                        "MEDIAN",
+                        "PERCENTILE"
+                      ],
+                      "type": "string",
+                      "description": "SQL aggregate function",
+                      "default": null
+                    },
+                    "saved_metric": {
+                      "default": false,
+                      "description": "If true, 'name' refers to a saved metric from the dataset (use get_dataset_info to see available metrics). When set, 'aggregate' is ignored.",
+                      "type": "boolean"
+                    },
+                    "sql_expression": {
+                      "maxLength": 2000,
+                      "type": "string",
+                      "description": "Custom SQL aggregate expression for an adhoc metric, e.g. 'COUNT(CASE WHEN closed_won THEN 1 END)::numeric / NULLIF(COUNT(*),0)'. Metric-only \u00e2\u0080\u0094 mutually exclusive with 'name', 'aggregate', and 'saved_metric'. Requires 'label'.",
+                      "default": null
+                    }
+                  },
+                  "type": "object",
+                  "description": "Shared temporal X-axis column"
+                },
+                "time_grain": {
+                  "enum": [
+                    "PT1S",
+                    "PT5S",
+                    "PT30S",
+                    "PT1M",
+                    "PT5M",
+                    "PT10M",
+                    "PT15M",
+                    "PT30M",
+                    "PT0.5H",
+                    "PT1H",
+                    "PT6H",
+                    "P1D",
+                    "P1W",
+                    "1969-12-28T00:00:00Z/P1W",
+                    "1969-12-29T00:00:00Z/P1W",
+                    "P1W/1970-01-03T00:00:00Z",
+                    "P1W/1970-01-04T00:00:00Z",
+                    "P1M",
+                    "P3M",
+                    "P0.25Y",
+                    "P1Y"
+                  ],
+                  "type": "string",
+                  "description": "PT1H, P1D, P1W, P1M, P1Y",
+                  "default": null
+                },
+                "y": {
+                  "description": "Primary Y-axis metrics",
+                  "items": {
+                    "properties": {
+                      "name": {
+                        "maxLength": 255,
+                        "minLength": 1,
+                        "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                        "type": "string",
+                        "default": null
+                      },
+                      "label": {
+                        "maxLength": 500,
+                        "type": "string",
+                        "default": null
+                      },
+                      "dtype": {
+                        "type": "string",
+                        "default": null
+                      },
+                      "aggregate": {
+                        "enum": [
+                          "SUM",
+                          "COUNT",
+                          "AVG",
+                          "MIN",
+                          "MAX",
+                          "COUNT_DISTINCT",
+                          "STDDEV",
+                          "VAR",
+                          "MEDIAN",
+                          "PERCENTILE"
+                        ],
+                        "type": "string",
+                        "description": "SQL aggregate function",
+                        "default": null
+                      },
+                      "saved_metric": {
+                        "default": false,
+                        "description": "If true, 'name' refers to a saved metric from the dataset (use get_dataset_info to see available metrics). When set, 'aggregate' is ignored.",
+                        "type": "boolean"
+                      },
+                      "sql_expression": {
+                        "maxLength": 2000,
+                        "type": "string",
+                        "description": "Custom SQL aggregate expression for an adhoc metric, e.g. 'COUNT(CASE WHEN closed_won THEN 1 END)::numeric / NULLIF(COUNT(*),0)'. Metric-only \u00e2\u0080\u0094 mutually exclusive with 'name', 'aggregate', and 'saved_metric'. Requires 'label'.",
+                        "default": null
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "primary_kind": {
+                  "default": "line",
+                  "enum": [
+                    "line",
+                    "bar",
+                    "area",
+                    "scatter"
+                  ],
+                  "type": "string"
+                },
+                "group_by": {
+                  "items": {
+                    "properties": {
+                      "name": {
+                        "maxLength": 255,
+                        "minLength": 1,
+                        "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                        "type": "string",
+                        "default": null
+                      },
+                      "label": {
+                        "maxLength": 500,
+                        "type": "string",
+                        "default": null
+                      },
+                      "dtype": {
+                        "type": "string",
+                        "default": null
+                      },
+                      "aggregate": {
+                        "enum": [
+                          "SUM",
+                          "COUNT",
+                          "AVG",
+                          "MIN",
+                          "MAX",
+                          "COUNT_DISTINCT",
+                          "STDDEV",
+                          "VAR",
+                          "MEDIAN",
+                          "PERCENTILE"
+                        ],
+                        "type": "string",
+                        "description": "SQL aggregate function",
+                        "default": null
+                      },
+                      "saved_metric": {
+                        "default": false,
+                        "description": "If true, 'name' refers to a saved metric from the dataset (use get_dataset_info to see available metrics). When set, 'aggregate' is ignored.",
+                        "type": "boolean"
+                      },
+                      "sql_expression": {
+                        "maxLength": 2000,
+                        "type": "string",
+                        "description": "Custom SQL aggregate expression for an adhoc metric, e.g. 'COUNT(CASE WHEN closed_won THEN 1 END)::numeric / NULLIF(COUNT(*),0)'. Metric-only \u00e2\u0080\u0094 mutually exclusive with 'name', 'aggregate', and 'saved_metric'. Requires 'label'.",
+                        "default": null
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "description": "Primary series group by",
+                  "default": null
+                },
+                "y_secondary": {
+                  "description": "Secondary Y-axis metrics",
+                  "items": {
+                    "properties": {
+                      "name": {
+                        "maxLength": 255,
+                        "minLength": 1,
+                        "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                        "type": "string",
+                        "default": null
+                      },
+                      "label": {
+                        "maxLength": 500,
+                        "type": "string",
+                        "default": null
+                      },
+                      "dtype": {
+                        "type": "string",
+                        "default": null
+                      },
+                      "aggregate": {
+                        "enum": [
+                          "SUM",
+                          "COUNT",
+                          "AVG",
+                          "MIN",
+                          "MAX",
+                          "COUNT_DISTINCT",
+                          "STDDEV",
+                          "VAR",
+                          "MEDIAN",
+                          "PERCENTILE"
+                        ],
+                        "type": "string",
+                        "description": "SQL aggregate function",
+                        "default": null
+                      },
+                      "saved_metric": {
+                        "default": false,
+                        "description": "If true, 'name' refers to a saved metric from the dataset (use get_dataset_info to see available metrics). When set, 'aggregate' is ignored.",
+                        "type": "boolean"
+                      },
+                      "sql_expression": {
+                        "maxLength": 2000,
+                        "type": "string",
+                        "description": "Custom SQL aggregate expression for an adhoc metric, e.g. 'COUNT(CASE WHEN closed_won THEN 1 END)::numeric / NULLIF(COUNT(*),0)'. Metric-only \u00e2\u0080\u0094 mutually exclusive with 'name', 'aggregate', and 'saved_metric'. Requires 'label'.",
+                        "default": null
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "secondary_kind": {
+                  "default": "bar",
+                  "enum": [
+                    "line",
+                    "bar",
+                    "area",
+                    "scatter"
+                  ],
+                  "type": "string"
+                },
+                "group_by_secondary": {
+                  "items": {
+                    "properties": {
+                      "name": {
+                        "maxLength": 255,
+                        "minLength": 1,
+                        "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                        "type": "string",
+                        "default": null
+                      },
+                      "label": {
+                        "maxLength": 500,
+                        "type": "string",
+                        "default": null
+                      },
+                      "dtype": {
+                        "type": "string",
+                        "default": null
+                      },
+                      "aggregate": {
+                        "enum": [
+                          "SUM",
+                          "COUNT",
+                          "AVG",
+                          "MIN",
+                          "MAX",
+                          "COUNT_DISTINCT",
+                          "STDDEV",
+                          "VAR",
+                          "MEDIAN",
+                          "PERCENTILE"
+                        ],
+                        "type": "string",
+                        "description": "SQL aggregate function",
+                        "default": null
+                      },
+                      "saved_metric": {
+                        "default": false,
+                        "description": "If true, 'name' refers to a saved metric from the dataset (use get_dataset_info to see available metrics). When set, 'aggregate' is ignored.",
+                        "type": "boolean"
+                      },
+                      "sql_expression": {
+                        "maxLength": 2000,
+                        "type": "string",
+                        "description": "Custom SQL aggregate expression for an adhoc metric, e.g. 'COUNT(CASE WHEN closed_won THEN 1 END)::numeric / NULLIF(COUNT(*),0)'. Metric-only \u00e2\u0080\u0094 mutually exclusive with 'name', 'aggregate', and 'saved_metric'. Requires 'label'.",
+                        "default": null
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "description": "Secondary series group by",
+                  "default": null
+                },
+                "show_legend": {
+                  "default": true,
+                  "type": "boolean"
+                },
+                "legend_orientation": {
+                  "default": "top",
+                  "description": "Legend placement around the chart",
+                  "enum": [
+                    "top",
+                    "bottom",
+                    "left",
+                    "right"
+                  ],
+                  "type": "string"
+                },
+                "show_value": {
+                  "default": false,
+                  "description": "Show data labels on each data point",
+                  "type": "boolean"
+                },
+                "x_axis": {
+                  "properties": {
+                    "title": {
+                      "maxLength": 200,
+                      "type": "string",
+                      "default": null
+                    },
+                    "scale": {
+                      "enum": [
+                        "linear",
+                        "log"
+                      ],
+                      "type": "string",
+                      "default": "linear"
+                    },
+                    "format": {
+                      "maxLength": 50,
+                      "type": "string",
+                      "description": "e.g. '$,.2f'",
+                      "default": null
+                    }
+                  },
+                  "type": "object",
+                  "default": null
+                },
+                "y_axis": {
+                  "properties": {
+                    "title": {
+                      "maxLength": 200,
+                      "type": "string",
+                      "default": null
+                    },
+                    "scale": {
+                      "enum": [
+                        "linear",
+                        "log"
+                      ],
+                      "type": "string",
+                      "default": "linear"
+                    },
+                    "format": {
+                      "maxLength": 50,
+                      "type": "string",
+                      "description": "e.g. '$,.2f'",
+                      "default": null
+                    }
+                  },
+                  "type": "object",
+                  "default": null
+                },
+                "y_axis_secondary": {
+                  "properties": {
+                    "title": {
+                      "maxLength": 200,
+                      "type": "string",
+                      "default": null
+                    },
+                    "scale": {
+                      "enum": [
+                        "linear",
+                        "log"
+                      ],
+                      "type": "string",
+                      "default": "linear"
+                    },
+                    "format": {
+                      "maxLength": 50,
+                      "type": "string",
+                      "description": "e.g. '$,.2f'",
+                      "default": null
+                    }
+                  },
+                  "type": "object",
+                  "default": null
+                },
+                "color_scheme": {
+                  "maxLength": 100,
+                  "type": "string",
+                  "description": "Superset color scheme ID (e.g. 'supersetColors', 'lyftColors'). When omitted, Superset's default scheme is used.",
+                  "default": null
+                },
+                "currency_format": {
+                  "description": "Currency symbol and placement applied to numeric values.",
+                  "properties": {
+                    "symbol": {
+                      "description": "Currency code or symbol (e.g. 'USD', 'EUR', '$', '\u00e2\u0082\u00ac')",
+                      "maxLength": 20,
+                      "type": "string"
+                    },
+                    "symbol_position": {
+                      "default": "prefix",
+                      "description": "Whether to render the symbol before or after the value",
+                      "enum": [
+                        "prefix",
+                        "suffix"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "symbol"
+                  ],
+                  "type": "object",
+                  "default": null
+                },
+                "currency_format_secondary": {
+                  "description": "Currency symbol and placement applied to numeric values.",
+                  "properties": {
+                    "symbol": {
+                      "description": "Currency code or symbol (e.g. 'USD', 'EUR', '$', '\u00e2\u0082\u00ac')",
+                      "maxLength": 20,
+                      "type": "string"
+                    },
+                    "symbol_position": {
+                      "default": "prefix",
+                      "description": "Whether to render the symbol before or after the value",
+                      "enum": [
+                        "prefix",
+                        "suffix"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "symbol"
+                  ],
+                  "type": "object",
+                  "default": null
+                },
+                "filters": {
+                  "items": {
+                    "properties": {
+                      "column": {
+                        "maxLength": 255,
+                        "minLength": 1,
+                        "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                        "type": "string"
+                      },
+                      "op": {
+                        "description": "LIKE/ILIKE use % wildcards. IN/NOT IN take a list.",
+                        "enum": [
+                          "=",
+                          ">",
+                          "<",
+                          ">=",
+                          "<=",
+                          "!=",
+                          "LIKE",
+                          "ILIKE",
+                          "NOT LIKE",
+                          "IN",
+                          "NOT IN"
+                        ],
+                        "type": "string"
+                      },
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                }
+                              ]
+                            },
+                            "type": "array"
+                          }
+                        ],
+                        "description": "For IN/NOT IN, provide a list."
+                      }
+                    },
+                    "required": [
+                      "column",
+                      "op",
+                      "value"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "description": "Structured filters (column/op/value). Do NOT use adhoc_filters or raw SQL expressions.",
+                  "default": null
+                },
+                "row_limit": {
+                  "default": 10000,
+                  "description": "Max data points",
+                  "maximum": 50000,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "y_secondary"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "chart_type": {
+                  "const": "handlebars",
+                  "description": "Chart type discriminator - MUST be 'handlebars' for custom HTML template charts. Handlebars charts render query results using Handlebars templates, enabling fully custom layouts like KPI cards, leaderboards, and formatted reports.",
+                  "type": "string"
+                },
+                "handlebars_template": {
+                  "description": "Handlebars HTML template string. Data is available as {{data}} array. Built-in helpers: {{dateFormat val format='YYYY-MM-DD'}}, {{formatNumber val}}, {{stringify obj}}. Example: '<ul>{{#each data}}<li>{{this.name}}: {{this.value}}</li>{{/each}}</ul>'",
+                  "maxLength": 50000,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "query_mode": {
+                  "default": "aggregate",
+                  "description": "Query mode: 'aggregate' groups data with metrics, 'raw' returns individual rows",
+                  "enum": [
+                    "aggregate",
+                    "raw"
+                  ],
+                  "type": "string"
+                },
+                "columns": {
+                  "items": {
+                    "properties": {
+                      "name": {
+                        "maxLength": 255,
+                        "minLength": 1,
+                        "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                        "type": "string",
+                        "default": null
+                      },
+                      "label": {
+                        "maxLength": 500,
+                        "type": "string",
+                        "default": null
+                      },
+                      "dtype": {
+                        "type": "string",
+                        "default": null
+                      },
+                      "aggregate": {
+                        "enum": [
+                          "SUM",
+                          "COUNT",
+                          "AVG",
+                          "MIN",
+                          "MAX",
+                          "COUNT_DISTINCT",
+                          "STDDEV",
+                          "VAR",
+                          "MEDIAN",
+                          "PERCENTILE"
+                        ],
+                        "type": "string",
+                        "description": "SQL aggregate function",
+                        "default": null
+                      },
+                      "saved_metric": {
+                        "default": false,
+                        "description": "If true, 'name' refers to a saved metric from the dataset (use get_dataset_info to see available metrics). When set, 'aggregate' is ignored.",
+                        "type": "boolean"
+                      },
+                      "sql_expression": {
+                        "maxLength": 2000,
+                        "type": "string",
+                        "description": "Custom SQL aggregate expression for an adhoc metric, e.g. 'COUNT(CASE WHEN closed_won THEN 1 END)::numeric / NULLIF(COUNT(*),0)'. Metric-only \u00e2\u0080\u0094 mutually exclusive with 'name', 'aggregate', and 'saved_metric'. Requires 'label'.",
+                        "default": null
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "description": "Columns to display in raw mode (query_mode='raw'). Each column specifies a column name to include in the query results.",
+                  "default": null
+                },
+                "groupby": {
+                  "items": {
+                    "properties": {
+                      "name": {
+                        "maxLength": 255,
+                        "minLength": 1,
+                        "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                        "type": "string",
+                        "default": null
+                      },
+                      "label": {
+                        "maxLength": 500,
+                        "type": "string",
+                        "default": null
+                      },
+                      "dtype": {
+                        "type": "string",
+                        "default": null
+                      },
+                      "aggregate": {
+                        "enum": [
+                          "SUM",
+                          "COUNT",
+                          "AVG",
+                          "MIN",
+                          "MAX",
+                          "COUNT_DISTINCT",
+                          "STDDEV",
+                          "VAR",
+                          "MEDIAN",
+                          "PERCENTILE"
+                        ],
+                        "type": "string",
+                        "description": "SQL aggregate function",
+                        "default": null
+                      },
+                      "saved_metric": {
+                        "default": false,
+                        "description": "If true, 'name' refers to a saved metric from the dataset (use get_dataset_info to see available metrics). When set, 'aggregate' is ignored.",
+                        "type": "boolean"
+                      },
+                      "sql_expression": {
+                        "maxLength": 2000,
+                        "type": "string",
+                        "description": "Custom SQL aggregate expression for an adhoc metric, e.g. 'COUNT(CASE WHEN closed_won THEN 1 END)::numeric / NULLIF(COUNT(*),0)'. Metric-only \u00e2\u0080\u0094 mutually exclusive with 'name', 'aggregate', and 'saved_metric'. Requires 'label'.",
+                        "default": null
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "description": "Columns to group by in aggregate mode (query_mode='aggregate'). These become the dimensions for aggregation.",
+                  "default": null
+                },
+                "metrics": {
+                  "items": {
+                    "properties": {
+                      "name": {
+                        "maxLength": 255,
+                        "minLength": 1,
+                        "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                        "type": "string",
+                        "default": null
+                      },
+                      "label": {
+                        "maxLength": 500,
+                        "type": "string",
+                        "default": null
+                      },
+                      "dtype": {
+                        "type": "string",
+                        "default": null
+                      },
+                      "aggregate": {
+                        "enum": [
+                          "SUM",
+                          "COUNT",
+                          "AVG",
+                          "MIN",
+                          "MAX",
+                          "COUNT_DISTINCT",
+                          "STDDEV",
+                          "VAR",
+                          "MEDIAN",
+                          "PERCENTILE"
+                        ],
+                        "type": "string",
+                        "description": "SQL aggregate function",
+                        "default": null
+                      },
+                      "saved_metric": {
+                        "default": false,
+                        "description": "If true, 'name' refers to a saved metric from the dataset (use get_dataset_info to see available metrics). When set, 'aggregate' is ignored.",
+                        "type": "boolean"
+                      },
+                      "sql_expression": {
+                        "maxLength": 2000,
+                        "type": "string",
+                        "description": "Custom SQL aggregate expression for an adhoc metric, e.g. 'COUNT(CASE WHEN closed_won THEN 1 END)::numeric / NULLIF(COUNT(*),0)'. Metric-only \u00e2\u0080\u0094 mutually exclusive with 'name', 'aggregate', and 'saved_metric'. Requires 'label'.",
+                        "default": null
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "description": "Metrics to aggregate in aggregate mode. Each must have an aggregate function (e.g., SUM, COUNT).",
+                  "default": null
+                },
+                "filters": {
+                  "items": {
+                    "properties": {
+                      "column": {
+                        "maxLength": 255,
+                        "minLength": 1,
+                        "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                        "type": "string"
+                      },
+                      "op": {
+                        "description": "LIKE/ILIKE use % wildcards. IN/NOT IN take a list.",
+                        "enum": [
+                          "=",
+                          ">",
+                          "<",
+                          ">=",
+                          "<=",
+                          "!=",
+                          "LIKE",
+                          "ILIKE",
+                          "NOT LIKE",
+                          "IN",
+                          "NOT IN"
+                        ],
+                        "type": "string"
+                      },
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                }
+                              ]
+                            },
+                            "type": "array"
+                          }
+                        ],
+                        "description": "For IN/NOT IN, provide a list."
+                      }
+                    },
+                    "required": [
+                      "column",
+                      "op",
+                      "value"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "description": "Filters to apply",
+                  "default": null
+                },
+                "row_limit": {
+                  "default": 1000,
+                  "description": "Maximum number of rows",
+                  "maximum": 50000,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "order_desc": {
+                  "default": true,
+                  "description": "Sort in descending order",
+                  "type": "boolean"
+                },
+                "style_template": {
+                  "maxLength": 10000,
+                  "type": "string",
+                  "description": "Optional CSS styles to apply to the rendered template",
+                  "default": null
+                }
+              },
+              "required": [
+                "chart_type",
+                "handlebars_template"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "chart_type": {
+                  "const": "big_number",
+                  "description": "Chart type discriminator - MUST be 'big_number'. Creates Big Number charts that display a single prominent metric value. Set show_trendline=True with a temporal_column for a number with trendline, or leave show_trendline=False for a standalone number.",
+                  "type": "string"
+                },
+                "metric": {
+                  "properties": {
+                    "name": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                      "type": "string",
+                      "default": null
+                    },
+                    "label": {
+                      "maxLength": 500,
+                      "type": "string",
+                      "default": null
+                    },
+                    "dtype": {
+                      "type": "string",
+                      "default": null
+                    },
+                    "aggregate": {
+                      "enum": [
+                        "SUM",
+                        "COUNT",
+                        "AVG",
+                        "MIN",
+                        "MAX",
+                        "COUNT_DISTINCT",
+                        "STDDEV",
+                        "VAR",
+                        "MEDIAN",
+                        "PERCENTILE"
+                      ],
+                      "type": "string",
+                      "description": "SQL aggregate function",
+                      "default": null
+                    },
+                    "saved_metric": {
+                      "default": false,
+                      "description": "If true, 'name' refers to a saved metric from the dataset (use get_dataset_info to see available metrics). When set, 'aggregate' is ignored.",
+                      "type": "boolean"
+                    },
+                    "sql_expression": {
+                      "maxLength": 2000,
+                      "type": "string",
+                      "description": "Custom SQL aggregate expression for an adhoc metric, e.g. 'COUNT(CASE WHEN closed_won THEN 1 END)::numeric / NULLIF(COUNT(*),0)'. Metric-only \u00e2\u0080\u0094 mutually exclusive with 'name', 'aggregate', and 'saved_metric'. Requires 'label'.",
+                      "default": null
+                    }
+                  },
+                  "type": "object",
+                  "description": "The metric to display as a big number. Must include an aggregate function (e.g., SUM, COUNT)."
+                },
+                "temporal_column": {
+                  "maxLength": 255,
+                  "minLength": 1,
+                  "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                  "type": "string",
+                  "description": "Temporal column for the trendline x-axis. Required when show_trendline is True.",
+                  "default": null
+                },
+                "time_grain": {
+                  "enum": [
+                    "PT1S",
+                    "PT5S",
+                    "PT30S",
+                    "PT1M",
+                    "PT5M",
+                    "PT10M",
+                    "PT15M",
+                    "PT30M",
+                    "PT0.5H",
+                    "PT1H",
+                    "PT6H",
+                    "P1D",
+                    "P1W",
+                    "1969-12-28T00:00:00Z/P1W",
+                    "1969-12-29T00:00:00Z/P1W",
+                    "P1W/1970-01-03T00:00:00Z",
+                    "P1W/1970-01-04T00:00:00Z",
+                    "P1M",
+                    "P3M",
+                    "P0.25Y",
+                    "P1Y"
+                  ],
+                  "type": "string",
+                  "description": "Time granularity for trendline data. Common values: PT1H (hour), P1D (day), P1W (week), P1M (month), P1Y (year).",
+                  "default": null
+                },
+                "show_trendline": {
+                  "default": false,
+                  "description": "Show a trendline below the big number. Requires 'temporal_column' to be set.",
+                  "type": "boolean"
+                },
+                "subheader": {
+                  "maxLength": 500,
+                  "type": "string",
+                  "description": "Subtitle text displayed below the big number",
+                  "default": null
+                },
+                "y_axis_format": {
+                  "maxLength": 50,
+                  "type": "string",
+                  "description": "Number format string for the metric value (e.g., '$,.2f' for currency, ',.0f' for integers, '.2%' for percentages)",
+                  "default": null
+                },
+                "time_format": {
+                  "maxLength": 50,
+                  "type": "string",
+                  "description": "Date format string for trendline x-axis labels (e.g. 'smart_date', '%Y-%m-%d'). Only applies when show_trendline=True.",
+                  "default": null
+                },
+                "currency_format": {
+                  "description": "Currency symbol and placement applied to numeric values.",
+                  "properties": {
+                    "symbol": {
+                      "description": "Currency code or symbol (e.g. 'USD', 'EUR', '$', '\u00e2\u0082\u00ac')",
+                      "maxLength": 20,
+                      "type": "string"
+                    },
+                    "symbol_position": {
+                      "default": "prefix",
+                      "description": "Whether to render the symbol before or after the value",
+                      "enum": [
+                        "prefix",
+                        "suffix"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "symbol"
+                  ],
+                  "type": "object",
+                  "default": null
+                },
+                "color_scheme": {
+                  "maxLength": 100,
+                  "type": "string",
+                  "description": "Superset color scheme ID for the trendline (e.g. 'supersetColors'). When omitted, Superset's default scheme is used.",
+                  "default": null
+                },
+                "start_y_axis_at_zero": {
+                  "default": true,
+                  "description": "Anchor trendline y-axis at zero",
+                  "type": "boolean"
+                },
+                "compare_lag": {
+                  "minimum": 1,
+                  "type": "integer",
+                  "description": "Number of time periods to compare against. Displays a percentage change vs the prior period.",
+                  "default": null
+                },
+                "filters": {
+                  "items": {
+                    "properties": {
+                      "column": {
+                        "maxLength": 255,
+                        "minLength": 1,
+                        "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9_\\s\\-\\.]*$",
+                        "type": "string"
+                      },
+                      "op": {
+                        "description": "LIKE/ILIKE use % wildcards. IN/NOT IN take a list.",
+                        "enum": [
+                          "=",
+                          ">",
+                          "<",
+                          ">=",
+                          "<=",
+                          "!=",
+                          "LIKE",
+                          "ILIKE",
+                          "NOT LIKE",
+                          "IN",
+                          "NOT IN"
+                        ],
+                        "type": "string"
+                      },
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                }
+                              ]
+                            },
+                            "type": "array"
+                          }
+                        ],
+                        "description": "For IN/NOT IN, provide a list."
+                      }
+                    },
+                    "required": [
+                      "column",
+                      "op",
+                      "value"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "description": "Filters to apply",
+                  "default": null
+                }
+              },
+              "required": [
+                "chart_type",
+                "metric"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "chart_name": {
+          "maxLength": 255,
+          "type": "string",
+          "description": "Auto-generates if omitted",
+          "default": null
+        },
+        "save_chart": {
+          "default": false,
+          "description": "Save permanently in Superset",
+          "type": "boolean"
+        },
+        "generate_preview": {
+          "default": true,
+          "type": "boolean"
+        },
+        "preview_formats": {
+          "items": {
+            "enum": [
+              "url",
+              "ascii",
+              "vega_lite",
+              "table"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sanitization_warnings": {
+          "description": "Internal: warnings emitted when user input was altered by sanitization. Populated by the ``mode='before'`` validator before chart_name is rewritten, so the tool can surface a notice to the caller instead of silently dropping content.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "dataset_id",
+        "config"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "request"
+  ],
+  "type": "object"
+}
