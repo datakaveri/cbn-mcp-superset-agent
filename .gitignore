@@ -1,2 +1,16 @@
 dump
 superset
+
+# Local secrets / config — never commit
+.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Runtime logs
+*.log
+
+# macOS
+.DS_Store

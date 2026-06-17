@@ -1,0 +1,19 @@
+# Superset MCP Agent — web UI
+#
+#   cd infra
+#   cp .env.example .env      # then fill in the secrets
+#   docker compose up -d --build
+#
+# UI: http://localhost:5001
+services:
+  mcp-agent-ui:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    image: cbn-mcp-superset-agent:latest
+    container_name: cbn-mcp-agent-ui
+    ports:
+      - "5001:5001"
+    env_file:
+      - .env
+    restart: unless-stopped

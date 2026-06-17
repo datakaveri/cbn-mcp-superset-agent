@@ -2,8 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Superset Agent Pipeline</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#6c5ce7" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="MCP Agent" />
+  <link rel="icon" href="favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" href="logo.png" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -31,11 +41,14 @@
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    html { -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; }
+
     body {
       font-family: 'Inter', sans-serif;
       background: var(--bg);
       color: var(--text);
       min-height: 100vh;
+      min-height: 100dvh;
       display: flex;
       flex-direction: column;
     }
@@ -58,13 +71,15 @@
     }
 
     .logo-icon {
-      width: 32px; height: 32px;
-      background: var(--purple-dim);
-      border: 1px solid var(--purple);
+      width: 34px; height: 34px;
+      background: #ffffff;
+      border: 1px solid var(--border2);
       border-radius: 8px;
       display: flex; align-items: center; justify-content: center;
-      font-size: 16px;
+      overflow: hidden;
     }
+
+    .logo-icon img { width: 26px; height: 26px; object-fit: contain; display: block; }
 
     .logo-text {
       font-size: 15px;
@@ -118,6 +133,7 @@
       gap: 0;
       overflow: hidden;
       height: calc(100vh - 61px);
+      height: calc(100dvh - 61px);
     }
 
     /* ── Query panel (top, full width) ── */
@@ -458,34 +474,145 @@
     ::-webkit-scrollbar-track { background: var(--surface); }
     ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 10px; }
 
-    /* ── Responsive ── */
+    /* ── Responsive: tablet & mobile ── */
     @media (max-width: 720px) {
+      header { padding: 10px 14px; gap: 8px 12px; }
+      .logo-sub { display: none; }                 /* reclaim vertical space */
+      .header-pills { gap: 6px; }
+
+      /* Single-column, natural page scroll instead of fixed-height panes */
       main {
         grid-template-columns: 1fr;
         grid-template-rows: auto auto 1fr;
         height: auto;
-        min-height: calc(100vh - 61px);
+        min-height: 0;
+        overflow: visible;
       }
 
+      .query-bar { flex-direction: column; padding: 12px 14px; gap: 12px; }
+      .query-label { font-size: 10px; }
+      /* 16px input font stops iOS from auto-zooming on focus */
+      textarea#query-input { font-size: 16px; min-height: 52px; }
+      .query-actions { flex-direction: row; padding-top: 0; gap: 10px; }
+      #run-btn, #clear-btn { flex: 1; min-height: 44px; padding: 12px; }
+
+      /* Pipeline phases become a horizontal, swipeable progress strip */
       .phases-panel {
+        flex-direction: row;
         border-right: none;
         border-bottom: 1px solid var(--border);
-        max-height: 260px;
+        max-height: none;
+        overflow-x: auto;
+        overflow-y: hidden;
+        gap: 8px;
+        padding: 10px 14px;
+        -webkit-overflow-scrolling: touch;
       }
+      .panel-title { display: none; }
+      .phase-item {
+        flex: 0 0 auto;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 66px;
+        padding: 8px 6px;
+        text-align: center;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+      }
+      .phase-item:hover { background: transparent; }
+      .phase-label { font-size: 10px; line-height: 1.25; }
+      .phase-badge { display: none; }
+      .timer { display: none !important; }
 
-      .query-bar { flex-direction: column; }
-      .query-actions { flex-direction: row; padding-top: 0; }
+      /* Logs: drop the phase column, give the panel a real area to scroll */
+      .log-panel { min-height: 55vh; }
+      .log-header { padding: 10px 14px; }
+      .log-entry { grid-template-columns: 52px 1fr; padding: 5px 14px; }
+      .log-entry .log-phase { display: none; }
 
-      .log-entry { grid-template-columns: 55px 80px 1fr; }
+      /* Result bar stacks */
+      #result-bar { padding: 12px 14px; }
+      #result-bar.visible { flex-direction: column; align-items: flex-start; gap: 8px; }
+      .result-meta { margin-left: 0; }
+      .open-btn { width: 100%; text-align: center; padding: 10px; }
     }
+
+    /* ── Phones: trim header chrome further ── */
+    @media (max-width: 480px) {
+      .logo-text { font-size: 14px; }
+      #pill-mcp, #pill-api, #pill-llm { display: none; }  /* keep user + logout */
+      .user-pill, #logout-btn { font-size: 10px; }
+      .ex-chip { font-size: 10px; }
+    }
+
+    /* ── Auth overlay ── */
+    #auth-overlay {
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      color: var(--text-mid);
+    }
+    #auth-overlay.hidden { display: none; }
+    #auth-overlay .auth-spinner {
+      width: 28px; height: 28px;
+      border: 3px solid var(--purple-dim);
+      border-top-color: var(--purple);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    #auth-overlay .auth-msg { font-size: 13px; }
+    #auth-overlay .auth-err { color: var(--red); font-size: 12px; max-width: 360px; text-align: center; }
+    #auth-overlay .auth-retry {
+      background: var(--purple); color: #fff; padding: 8px 18px; border-radius: 8px; font-size: 13px;
+    }
+
+    /* User chip + logout */
+    .user-pill {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      border: 1px solid var(--border2);
+      color: var(--text-mid);
+      background: var(--surface2);
+    }
+    .user-pill.visible { display: flex; }
+    #logout-btn {
+      display: none;
+      background: var(--surface2);
+      color: var(--text-mid);
+      border: 1px solid var(--border);
+      padding: 4px 12px;
+      font-size: 11px;
+      border-radius: 20px;
+    }
+    #logout-btn.visible { display: inline-block; }
+    #logout-btn:hover { border-color: var(--red); color: var(--red); }
   </style>
 </head>
 <body>
 
+<!-- ── Auth overlay (covers app until Keycloak resolves) ── -->
+<div id="auth-overlay">
+  <div class="auth-spinner"></div>
+  <div class="auth-msg" id="auth-msg">Authenticating…</div>
+  <div class="auth-err" id="auth-err" style="display:none"></div>
+  <button class="auth-retry" id="auth-retry" style="display:none" onclick="location.reload()">Retry</button>
+</div>
+
 <!-- ── Header ── -->
 <header>
   <div class="logo">
-    <div class="logo-icon">◆</div>
+    <div class="logo-icon"><img src="logo.png" alt="CBN" /></div>
     <div>
       <div class="logo-text">Superset MCP Agent</div>
       <div class="logo-sub">NL → Dashboard Pipeline</div>
@@ -493,9 +620,11 @@
   </div>
 
   <div class="header-pills">
-    <div class="pill" id="pill-mcp"><div class="pill-dot"></div>MCP :5008</div>
+    <div class="pill" id="pill-mcp"><div class="pill-dot"></div>MCP</div>
     <div class="pill" id="pill-api"><div class="pill-dot"></div>Superset API</div>
-    <div class="pill" id="pill-llm"><div class="pill-dot"></div>gpt-20b LLM</div>
+    <div class="pill" id="pill-llm"><div class="pill-dot"></div>gpt-5.5 LLM</div>
+    <div class="user-pill" id="user-pill">◍ <span id="user-name"></span></div>
+    <button id="logout-btn" onclick="doLogout()">Logout</button>
   </div>
 </header>
 
@@ -591,12 +720,10 @@
 
 <script>
   // ── Backend config ─────────────────────────────────────────────
-  // Change this to wherever your pipeline.py Flask server is running.
-  // If you open index.html directly from Flask (python pipeline.py),
-  // leave it as an empty string and it will use the same origin.
-  // If you open index.html from a different port (e.g. file://, :9001),
-  // set this explicitly: e.g. 'http://localhost:5001'
-  const BACKEND_URL = 'http://localhost:5001';
+  // The page is served by pipeline.py's Flask server, so use same-origin
+  // ('' → relative URLs). This also keeps the Keycloak redirect URI and the
+  // API on the same origin. Only override if you serve index.html elsewhere.
+  const BACKEND_URL = '';
 
   // ── State ──────────────────────────────────────────────────────
   let running = false;
@@ -771,12 +898,21 @@
     const phaseRunning = {};
 
     try {
+      const headers = { 'Content-Type': 'application/json' };
+      const token = await getAuthToken();
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+
       const resp = await fetch(`${BACKEND_URL}/run`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ query }),
       });
 
+      if (resp.status === 401 || resp.status === 403) {
+        addLog(ts(), 'system', 'error', 'Session expired or unauthorized — please sign in again.');
+        if (window.__kc) window.__kc.login();
+        throw new Error(`Authentication required (${resp.status})`);
+      }
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
         throw new Error(`Server returned ${resp.status}${text ? ': ' + text.slice(0, 120) : ''}`);
@@ -928,6 +1064,46 @@
     }, 420);
   }
 
+  // ── Auth helpers (window.__kc is set by the Keycloak bootstrap below) ──
+  async function getAuthToken() {
+    const kc = window.__kc;
+    if (!kc) return null;                 // auth disabled → no token needed
+    try {
+      await kc.updateToken(30);
+    } catch (e) {
+      kc.login();
+      return null;
+    }
+    return kc.token;
+  }
+
+  function doLogout() {
+    if (window.__kc) window.__kc.logout({ redirectUri: window.location.origin });
+  }
+
+  function revealApp() {
+    const ov = document.getElementById('auth-overlay');
+    if (ov) ov.classList.add('hidden');
+  }
+
+  function showAuthError(msg) {
+    document.getElementById('auth-msg').style.display = 'none';
+    const sp = document.querySelector('#auth-overlay .auth-spinner');
+    if (sp) sp.style.display = 'none';
+    const err = document.getElementById('auth-err');
+    err.style.display = 'block';
+    err.textContent = msg;
+    document.getElementById('auth-retry').style.display = 'inline-block';
+  }
+
+  function setUser(tokenParsed) {
+    const name = (tokenParsed &&
+      (tokenParsed.preferred_username || tokenParsed.name || tokenParsed.email)) || 'user';
+    document.getElementById('user-name').textContent = name;
+    document.getElementById('user-pill').classList.add('visible');
+    document.getElementById('logout-btn').classList.add('visible');
+  }
+
   // Enter key submits
   document.getElementById('query-input').addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -935,6 +1111,62 @@
       runPipeline();
     }
   });
+</script>
+
+<script type="module">
+  // ── Keycloak bootstrap — gate the UI behind login ──────────────
+  async function boot() {
+    let cfg;
+    try {
+      cfg = await (await fetch('/auth-config')).json();
+    } catch {
+      cfg = { enabled: false };
+    }
+
+    if (!cfg || !cfg.enabled) {
+      window.__kc = null;                 // auth disabled → open access
+      revealApp();
+      return;
+    }
+
+    let Keycloak;
+    try {
+      ({ default: Keycloak } = await import('https://cdn.jsdelivr.net/npm/keycloak-js@26.2.2/+esm'));
+    } catch (e) {
+      showAuthError('Could not load the authentication library. Check your connection.');
+      return;
+    }
+
+    const kc = new Keycloak({ url: cfg.url, realm: cfg.realm, clientId: cfg.clientId });
+    try {
+      const authenticated = await kc.init({
+        onLoad: 'login-required',         // redirect to Keycloak if not signed in
+        pkceMethod: 'S256',
+        checkLoginIframe: false,
+      });
+      if (!authenticated) { await kc.login(); return; }
+    } catch (e) {
+      showAuthError('Authentication failed: ' + ((e && e.error) || e) +
+        '. Make sure this app origin is registered in the Keycloak client (' +
+        cfg.clientId + ').');
+      return;
+    }
+
+    window.__kc = kc;
+    setUser(kc.tokenParsed);
+    revealApp();
+
+    // Keep the token fresh in the background.
+    setInterval(() => kc.updateToken(60).catch(() => {}), 30000);
+  }
+  boot();
+
+  // ── Service worker (PWA) ──────────────────────────────────────
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+    });
+  }
 </script>
 </body>
 </html>

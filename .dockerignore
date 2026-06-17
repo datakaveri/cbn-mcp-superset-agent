@@ -1,0 +1,13 @@
+# Keep the build context lean and free of secrets
+.git/
+.venv/
+**/__pycache__/
+**/*.pyc
+**/*.log
+.env
+infra/.env
+dump/
+superset/
+.vscode/
+.claude/
+*.md

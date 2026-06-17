@@ -32,7 +32,12 @@ from agents.dataset_agent import DatasetAgent
 from agents.sql_agent import SQLAgent
 from agents.chart_agent import ChartAgent
 from agents.dashboard_agent import DashboardAgent
-from config import MAX_PLAN_RETRIES
+from keycloak_auth import require_auth
+from config import (
+    MAX_PLAN_RETRIES,
+    KEYCLOAK_ENABLED, KEYCLOAK_URL, KEYCLOAK_REALM,
+    KEYCLOAK_CLIENT_ID, KEYCLOAK_REQUIRED_ROLE,
+)
 
 log = logging.getLogger(__name__)
 
@@ -294,7 +299,47 @@ def run_web_server(port: int = 5001, host: str = "0.0.0.0"):
     def health():
         return {"status": "ok"}
 
+    @app.route("/auth-config")
+    def auth_config():
+        # Public: lets the browser bootstrap Keycloak with server-driven config.
+        return {
+            "enabled": KEYCLOAK_ENABLED,
+            "url": KEYCLOAK_URL,
+            "realm": KEYCLOAK_REALM,
+            "clientId": KEYCLOAK_CLIENT_ID,
+            "requiredRole": KEYCLOAK_REQUIRED_ROLE or None,
+        }
+
+    # ── PWA assets ───────────────────────────────────────────────────
+    @app.route("/manifest.webmanifest")
+    def manifest():
+        return send_from_directory(base_dir, "manifest.webmanifest",
+                                   mimetype="application/manifest+json")
+
+    @app.route("/service-worker.js")
+    def service_worker():
+        resp = send_from_directory(base_dir, "service-worker.js",
+                                   mimetype="application/javascript")
+        resp.headers["Service-Worker-Allowed"] = "/"
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+    @app.route("/logo.png")
+    def logo():
+        return send_from_directory(base_dir, "logo.png", mimetype="image/png")
+
+    @app.route("/favicon.ico")
+    def favicon():
+        return send_from_directory(base_dir, "favicon.ico", mimetype="image/x-icon")
+
+    @app.route("/icon-<int:size>.png")
+    def icon_png(size: int):
+        if size not in (192, 512):
+            return {"error": "not found"}, 404
+        return send_from_directory(base_dir, f"icon-{size}.png", mimetype="image/png")
+
     @app.route("/run", methods=["POST"])
+    @require_auth
     def run_pipeline():
         body = request.get_json(force=True, silent=True) or {}
         user_query = (body.get("query") or "").strip()
@@ -372,7 +417,12 @@ def run_web_server(port: int = 5001, host: str = "0.0.0.0"):
             },
         )
 
-    print(f"\n  ◆ Superset Agent UI → http://localhost:{port}\n")
+    auth_state = (
+        f"Keycloak auth ON (realm={KEYCLOAK_REALM}, client={KEYCLOAK_CLIENT_ID})"
+        if KEYCLOAK_ENABLED else "Keycloak auth OFF (KEYCLOAK_ENABLED=false)"
+    )
+    print(f"\n  ◆ Superset Agent UI → http://localhost:{port}")
+    print(f"    {auth_state}\n")
     app.run(host=host, port=port, threaded=True, debug=False)
 
 

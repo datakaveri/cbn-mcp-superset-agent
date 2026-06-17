@@ -1,26 +1,37 @@
 """
-LLM client for the local gpt-20b model at 10.10.17.55:80.
-Sends HTTP POST to /api/generate and parses JSON from the response.
+LLM client for the OpenAI chat-completions API.
+Sends HTTP POST to {LLM_BASE_URL}{LLM_GENERATE_PATH} (default
+https://api.openai.com/v1/chat/completions) with a Bearer token and
+parses the assistant message text from the response.
 """
 
 import json
 import logging
 import re
 import requests
-from typing import Any, Optional
+from typing import Any
 
-from config import LLM_BASE_URL, LLM_GENERATE_PATH, LLM_MODEL, LLM_TIMEOUT
+from config import (
+    LLM_BASE_URL,
+    LLM_GENERATE_PATH,
+    LLM_MODEL,
+    LLM_TIMEOUT,
+    LLM_API_KEY,
+    LLM_TEMPERATURE,
+)
 
 log = logging.getLogger(__name__)
 
 
 class LLMClient:
-    """HTTP client for the local LLM endpoint."""
+    """HTTP client for the OpenAI chat-completions endpoint."""
 
     def __init__(self):
         self.url = f"{LLM_BASE_URL}{LLM_GENERATE_PATH}"
         self.model = LLM_MODEL
         self.timeout = LLM_TIMEOUT
+        self.api_key = LLM_API_KEY
+        self.temperature = LLM_TEMPERATURE
         self._http = requests.Session()
 
     def generate(self, system_prompt: str, user_prompt: str) -> str:
@@ -28,33 +39,59 @@ class LLMClient:
         Call the LLM and return the raw text response.
         Raises LLMError on failure.
         """
-        payload = {
+        if not self.api_key:
+            raise LLMError(
+                "No OpenAI API key configured. Set OPENAI_API_KEY (or LLM_API_KEY)."
+            )
+
+        payload: dict[str, Any] = {
             "model": self.model,
-            "prompt": user_prompt,
-            "system": system_prompt,
-            "stream": False,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        }
+        # Only send temperature when explicitly configured — some newer models
+        # reject any non-default value.
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
         }
 
         log.info("LLM call: model=%s, prompt_len=%d", self.model, len(user_prompt))
 
         try:
             resp = self._http.post(
-                self.url, json=payload, timeout=self.timeout,
+                self.url, json=payload, headers=headers, timeout=self.timeout,
             )
             resp.raise_for_status()
+        except requests.HTTPError as e:
+            # Surface OpenAI's error body, which carries the useful detail.
+            detail = ""
+            if e.response is not None:
+                try:
+                    detail = e.response.json().get("error", {}).get("message", "")
+                except (ValueError, AttributeError):
+                    detail = e.response.text[:300]
+            raise LLMError(f"LLM request failed: {e}{f' — {detail}' if detail else ''}") from e
         except requests.RequestException as e:
             raise LLMError(f"LLM request failed: {e}") from e
 
         data = resp.json()
 
-        # Handle different response formats
-        # Ollama-style: {"response": "..."}
+        # OpenAI chat-completions: {"choices": [{"message": {"content": "..."}}]}
+        if "choices" in data:
+            try:
+                return data["choices"][0]["message"]["content"]
+            except (KeyError, IndexError, TypeError) as e:
+                raise LLMError(f"Malformed chat-completions response: {data}") from e
+        # Ollama-style fallback: {"response": "..."}
         if "response" in data:
             return data["response"]
-        # OpenAI-style: {"choices": [{"message": {"content": "..."}}]}
-        if "choices" in data:
-            return data["choices"][0]["message"]["content"]
-        # Fallback: try 'text' or 'output'
+        # Fallback: try other common keys
         for key in ("text", "output", "content", "result"):
             if key in data:
                 return data[key]

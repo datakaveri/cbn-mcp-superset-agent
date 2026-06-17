@@ -95,8 +95,9 @@ User Query (NL)
 ## Prerequisites
 
 - Python 3.11+
-- A running **Apache Superset** instance with the MCP service enabled
-- A running **LLM** endpoint compatible with the Ollama or OpenAI `generate` response format
+- Access to the hosted **Superset MCP** endpoint and a **Bearer token** for it (`MCP_AUTH_TOKEN`)
+- An **OpenAI API key** (the LLM client calls the OpenAI chat-completions API by default)
+- A **Keycloak** realm/client for the web UI (defaults to the shared `cbn` / `angular-client`; see [Authentication](#authentication-web-ui))
 - The `sqllab_agent` dataset already loaded into Superset (Nigerian banking transactions)
 
 ---
@@ -120,19 +121,27 @@ pip install -r requirements.txt
 
 ## Configuration
 
-All settings are read from environment variables with sensible defaults. Either export them in your shell or create a `.env` file and load it before running.
+All settings are read from environment variables with sensible defaults. A `.env` file in the project root is **loaded automatically** at startup (via `python-dotenv`); any variable already exported in your shell takes precedence.
 
 | Variable | Default | Description |
 |---|---|---|
 | `SUPERSET_BASE_URL` | `http://localhost:9001` | Superset base URL |
 | `SUPERSET_USERNAME` | `admin` | Superset login username |
 | `SUPERSET_PASSWORD` | `admin` | Superset login password |
-| `MCP_URL` | `http://localhost:5008/mcp` | Superset MCP service endpoint |
+| `MCP_URL` | `https://dashboard.idx-ng.com/mcp` | Superset MCP service endpoint |
+| `MCP_AUTH_TOKEN` | _(none)_ | **Required for the hosted MCP.** Bearer token sent as `Authorization: Bearer …` on every MCP request. |
 | `MCP_DEV_USERNAME` | `admin` | Username used by the MCP service (must match `superset_config.py`) |
-| `LLM_BASE_URL` | `http://10.10.17.55:80` | Base URL of the LLM server |
-| `LLM_GENERATE_PATH` | `/api/generate` | Path to the generate endpoint |
-| `LLM_MODEL` | `gpt-20b` | Model name to pass to the LLM |
+| `OPENAI_API_KEY` | _(none)_ | **Required.** OpenAI API key (sent as `Authorization: Bearer`). `LLM_API_KEY` is also accepted. |
+| `LLM_BASE_URL` | `https://api.openai.com/v1` | Base URL of the OpenAI-compatible API |
+| `LLM_GENERATE_PATH` | `/chat/completions` | Path to the chat-completions endpoint |
+| `LLM_MODEL` | `gpt-5.5` | Model name to pass to the LLM |
 | `LLM_TIMEOUT` | `600` | LLM request timeout in seconds |
+| `LLM_TEMPERATURE` | _(unset)_ | Optional sampling temperature; omitted by default to use the model default |
+| `KEYCLOAK_ENABLED` | `true` | Gate the web UI behind Keycloak login. Set `false` to disable auth (local dev only). |
+| `KEYCLOAK_URL` | `https://keycloak.idx-ng.com/auth` | Keycloak base URL (same as ui-cbn) |
+| `KEYCLOAK_REALM` | `cbn` | Keycloak realm |
+| `KEYCLOAK_CLIENT_ID` | `angular-client` | Keycloak client (shared with ui-cbn) |
+| `KEYCLOAK_REQUIRED_ROLE` | _(empty)_ | Optional realm role required to use the UI; empty = any authenticated user |
 | `MAX_CHART_RETRIES` | `3` | Max retry attempts per chart |
 | `MAX_PLAN_RETRIES` | `2` | Max plan refinement passes |
 | `SQL_PROBE_LIMIT` | `5` | Rows fetched during SQL validation |
@@ -144,10 +153,45 @@ Example `.env`:
 SUPERSET_BASE_URL=http://localhost:9001
 SUPERSET_USERNAME=admin
 SUPERSET_PASSWORD=admin
-MCP_URL=http://localhost:5008/mcp
-LLM_BASE_URL=http://10.10.17.55:80
-LLM_MODEL=gpt-20b
+MCP_URL=https://dashboard.idx-ng.com/mcp
+MCP_AUTH_TOKEN=eyJhbGci...            # Bearer token for the hosted MCP
+OPENAI_API_KEY=sk-...
+LLM_MODEL=gpt-5.5
 ```
+
+> **Note:** `.env` holds secrets (MCP token, OpenAI key) and is gitignored — never commit it.
+
+---
+
+## Authentication (web UI)
+
+The Flask web UI is gated by **Keycloak**, reusing the same client as the `ui-cbn`
+Angular app (realm `cbn`, client `angular-client`). Only authenticated users can
+reach the UI, and the protection is enforced on **two layers**:
+
+- **Browser** — `index.html` boots `keycloak-js` with `onLoad: 'login-required'`
+  (PKCE `S256`). An unauthenticated visitor is redirected to the Keycloak login
+  and never sees the app; the access token is attached to every `POST /run`.
+- **Server** — `POST /run` is wrapped with `@require_auth` ([keycloak_auth.py](agent/keycloak_auth.py)),
+  which verifies the bearer token's signature against the realm JWKS, plus issuer
+  and expiry. Direct API calls without a valid token get `401`. `GET /`, `/health`,
+  and `/auth-config` stay public (the shell must load to start the login flow).
+
+> ⚠️ **Keycloak admin step (one-time):** because we reuse `angular-client`, this
+> app's origin (e.g. `http://localhost:5001`, and the deployed URL) **must be added
+> to that client's _Valid Redirect URIs_ and _Web Origins_** in Keycloak — otherwise
+> the login redirect fails. No code change needed, just client config.
+
+To run the UI without auth during local development: `KEYCLOAK_ENABLED=false`.
+
+## Progressive Web App (PWA)
+
+The web UI is installable as a PWA: it ships a [manifest.webmanifest](agent/manifest.webmanifest),
+a [service-worker.js](agent/service-worker.js) that caches the static shell (never auth/API
+traffic), and `192/512` app icons generated from the **Central Bank of Nigeria** crest
+(`logo.png`, shared with ui-cbn) plus a `favicon.ico`. Browsers will offer "Install app";
+the service worker enables app-like launch and offline loading of the shell. Auth and
+pipeline calls always require the network.
 
 ---
 

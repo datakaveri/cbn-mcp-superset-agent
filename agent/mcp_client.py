@@ -9,7 +9,7 @@ import logging
 import requests
 from typing import Any, Optional
  
-from config import MCP_URL, REQUEST_TIMEOUT
+from config import MCP_URL, MCP_AUTH_TOKEN, REQUEST_TIMEOUT
 from models import AgentResult
  
 log = logging.getLogger(__name__)
@@ -18,8 +18,9 @@ log = logging.getLogger(__name__)
 class MCPClient:
     """Stateful MCP client — initializes a session, then calls tools."""
  
-    def __init__(self, base_url: str = MCP_URL):
+    def __init__(self, base_url: str = MCP_URL, auth_token: str = MCP_AUTH_TOKEN):
         self.base_url = base_url
+        self.auth_token = auth_token
         self.session_id: Optional[str] = None
         self._request_id = 0
         self._http = requests.Session()
@@ -27,6 +28,9 @@ class MCPClient:
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         })
+        # The hosted MCP endpoint requires a Bearer token on every request.
+        if auth_token:
+            self._http.headers["Authorization"] = f"Bearer {auth_token}"
  
     # ── Low-level transport ──────────────────────────────────────────
  
