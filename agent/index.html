@@ -720,10 +720,16 @@
 
 <script>
   // ── Backend config ─────────────────────────────────────────────
-  // The page is served by pipeline.py's Flask server, so use same-origin
-  // ('' → relative URLs). This also keeps the Keycloak redirect URI and the
-  // API on the same origin. Only override if you serve index.html elsewhere.
+  // Empty → same-origin, RELATIVE URLs that resolve against <base href> so the
+  // app works whether served at the domain root or under a sub-path (e.g.
+  // /chatbot behind a proxy). Only set this to call a different origin.
   const BACKEND_URL = '';
+
+  // Build an API URL. Relative when same-origin (honors <base>); absolute when
+  // BACKEND_URL is an explicit cross-origin host.
+  function apiUrl(path) {
+    return BACKEND_URL ? `${BACKEND_URL}/${path}` : path;
+  }
 
   // ── State ──────────────────────────────────────────────────────
   let running = false;
@@ -902,7 +908,7 @@
       const token = await getAuthToken();
       if (token) headers['Authorization'] = 'Bearer ' + token;
 
-      const resp = await fetch(`${BACKEND_URL}/run`, {
+      const resp = await fetch(apiUrl('run'), {
         method: 'POST',
         headers,
         body: JSON.stringify({ query }),
@@ -1118,8 +1124,10 @@
   async function boot() {
     let cfg;
     try {
-      cfg = await (await fetch('/auth-config')).json();
-    } catch {
+      // Relative URL → resolves against <base href> (works under a sub-path).
+      cfg = await (await fetch('auth-config')).json();
+    } catch (e) {
+      console.warn('auth-config unreachable — auth disabled fallback:', e);
       cfg = { enabled: false };
     }
 
@@ -1164,7 +1172,8 @@
   // ── Service worker (PWA) ──────────────────────────────────────
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+      // Relative → registers under the current base path (sub-path safe).
+      navigator.serviceWorker.register('service-worker.js').catch(() => {});
     });
   }
 </script>

@@ -34,7 +34,7 @@ from agents.chart_agent import ChartAgent
 from agents.dashboard_agent import DashboardAgent
 from keycloak_auth import require_auth
 from config import (
-    MAX_PLAN_RETRIES,
+    MAX_PLAN_RETRIES, APP_BASE_PATH,
     KEYCLOAK_ENABLED, KEYCLOAK_URL, KEYCLOAK_REALM,
     KEYCLOAK_CLIENT_ID, KEYCLOAK_REQUIRED_ROLE,
 )
@@ -293,7 +293,15 @@ def run_web_server(port: int = 5001, host: str = "0.0.0.0"):
 
     @app.route("/")
     def index():
-        return send_from_directory(base_dir, "index.html")
+        # When served under a sub-path (e.g. /chatbot behind a proxy), inject a
+        # <base> tag so the browser resolves auth-config/run/assets under the
+        # prefix. APP_BASE_PATH wins; otherwise honor the proxy's X-Forwarded-Prefix.
+        prefix = APP_BASE_PATH or request.headers.get("X-Forwarded-Prefix", "").rstrip("/")
+        with open(os.path.join(base_dir, "index.html"), encoding="utf-8") as f:
+            html = f.read()
+        if prefix:
+            html = html.replace("<head>", f'<head>\n  <base href="{prefix}/" />', 1)
+        return Response(html, mimetype="text/html")
 
     @app.route("/health")
     def health():

@@ -3,13 +3,14 @@
  * Never caches auth or API traffic (/run, /health, /auth-config) or
  * cross-origin requests (Keycloak, OpenAI, Superset).
  */
-const CACHE = 'mcp-agent-v1';
+const CACHE = 'mcp-agent-v2';
+// Relative to the SW location, so it works under a sub-path (e.g. /chatbot/).
 const SHELL = [
-  '/',
-  '/index.html',
-  '/manifest.webmanifest',
-  '/logo.png',
-  '/favicon.ico',
+  './',
+  'index.html',
+  'manifest.webmanifest',
+  'logo.png',
+  'favicon.ico',
 ];
 
 self.addEventListener('install', (event) => {
@@ -35,7 +36,8 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;            // don't touch Keycloak/OpenAI/Superset
-  if (/^\/(run|health|auth-config|service-worker\.js)/.test(url.pathname)) return;
+  // Skip auth/API/SW regardless of any path prefix (/chatbot/auth-config, etc.)
+  if (/\/(run|health|auth-config|service-worker\.js)$/.test(url.pathname)) return;
 
   // Cache-first for the static shell, with a network refresh in the background.
   event.respondWith(

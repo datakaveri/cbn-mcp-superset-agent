@@ -131,6 +131,7 @@ All settings are read from environment variables with sensible defaults. A `.env
 | `MCP_URL` | `https://dashboard.idx-ng.com/mcp` | Superset MCP service endpoint |
 | `MCP_AUTH_TOKEN` | _(none)_ | **Required for the hosted MCP.** Bearer token sent as `Authorization: Bearer …` on every MCP request. |
 | `MCP_DEV_USERNAME` | `admin` | Username used by the MCP service (must match `superset_config.py`) |
+| `APP_BASE_PATH` | _(empty)_ | Sub-path the web UI is served under behind a proxy, e.g. `/chatbot`. Injects `<base>` so auth/API/assets resolve under the prefix. Empty = served at root. |
 | `OPENAI_API_KEY` | _(none)_ | **Required.** OpenAI API key (sent as `Authorization: Bearer`). `LLM_API_KEY` is also accepted. |
 | `LLM_BASE_URL` | `https://api.openai.com/v1` | Base URL of the OpenAI-compatible API |
 | `LLM_GENERATE_PATH` | `/chat/completions` | Path to the chat-completions endpoint |

@@ -21,6 +21,12 @@ SUPERSET_API_URL = f"{SUPERSET_BASE_URL}/api/v1"
 SUPERSET_USERNAME = os.getenv("SUPERSET_USERNAME", "admin")
 SUPERSET_PASSWORD = os.getenv("SUPERSET_PASSWORD", "admin")
 
+# ── Web UI ────────────────────────────────────────────────────────────
+# Sub-path the web UI is served under behind a reverse proxy, e.g. "/chatbot".
+# Leave empty when served at the domain root. Used to inject <base> so the
+# browser resolves /auth-config, /run and assets under the prefix.
+APP_BASE_PATH = os.getenv("APP_BASE_PATH", "").rstrip("/")
+
 # ── MCP Service ───────────────────────────────────────────────────────
 MCP_URL = os.getenv("MCP_URL", "https://dashboard.idx-ng.com/mcp")
 # Bearer token for the hosted MCP endpoint (sent as `Authorization: Bearer …`).

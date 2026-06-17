@@ -48,13 +48,33 @@ password lack defaults; everything else has a sensible default.
 | `MCP_AUTH_TOKEN` | hosted MCP rejects requests without it |
 | `SUPERSET_PASSWORD` | health check logs into Superset |
 
+## Serving under a sub-path
+
+When the UI is behind a reverse proxy at a sub-path (e.g.
+`https://dashboard.idx-ng.com/chatbot`), set **`APP_BASE_PATH=/chatbot`**. The
+server then injects `<base href="/chatbot/">` so the browser resolves
+`auth-config`, `run`, and assets under the prefix — otherwise the frontend calls
+`/auth-config` at the domain root, the auth bootstrap fails, and the UI loads
+**without** the login redirect.
+
+The proxy must strip the prefix before forwarding (so Flask sees `/auth-config`,
+not `/chatbot/auth-config`). Typical nginx:
+
+```nginx
+location /chatbot/ { proxy_pass http://mcp-agent-ui:5001/; }   # trailing slash strips the prefix
+location = /chatbot { return 308 /chatbot/; }                  # enforce trailing slash
+```
+
+If your proxy sends `X-Forwarded-Prefix`, the app uses it automatically and you
+can leave `APP_BASE_PATH` empty.
+
 ## ⚠️ Keycloak one-time setup (required)
 
 The UI reuses the `angular-client` Keycloak client. Before login works, an admin
-must add this deployment's **public origin** to that client in Keycloak:
+must add this deployment's **public origin and path** to that client in Keycloak:
 
-- **Valid Redirect URIs:** `https://<your-host>/*` (and `http://localhost:5001/*` for local)
-- **Web Origins:** `https://<your-host>` (and `http://localhost:5001`)
+- **Valid Redirect URIs:** `https://dashboard.idx-ng.com/chatbot/*` (and `http://localhost:5001/*` for local)
+- **Web Origins:** `https://dashboard.idx-ng.com` (and `http://localhost:5001`)
 
 Otherwise the browser login redirect is rejected. To run without auth (local
 testing only), set `KEYCLOAK_ENABLED=false`.
