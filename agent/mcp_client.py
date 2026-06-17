@@ -157,6 +157,19 @@ class MCPClient:
                 details=parsed if isinstance(parsed, dict) else None,
             )
  
+        # Many Superset MCP tools (execute_sql, generate_chart, …) signal a
+        # tool-level failure *inside* a 200 response via "success": false plus an
+        # "error" field. Surface that as a real failure instead of letting callers
+        # mistake it for empty/ID-less success.
+        if isinstance(parsed, dict) and parsed.get("success") is False:
+            err = parsed.get("error")
+            if isinstance(err, dict):
+                msg = err.get("message") or err.get("details") or str(err)
+            else:
+                msg = str(err) if err else "MCP tool reported success=false"
+            import html
+            return AgentResult.fail(html.unescape(msg), details=parsed)
+
         return AgentResult.ok(parsed)
  
     # ── Convenience wrappers ─────────────────────────────────────────
