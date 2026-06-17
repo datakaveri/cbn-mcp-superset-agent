@@ -57,12 +57,24 @@ server then injects `<base href="/chatbot/">` so the browser resolves
 `/auth-config` at the domain root, the auth bootstrap fails, and the UI loads
 **without** the login redirect.
 
-The proxy must strip the prefix before forwarding (so Flask sees `/auth-config`,
-not `/chatbot/auth-config`). Typical nginx:
+The proxy **must route the whole `/chatbot/` subtree** to this container — not
+just the bare `/chatbot` path. The app strips the prefix itself (via
+`APP_BASE_PATH` or `X-Forwarded-Prefix`), so it works whether or not the proxy
+also strips it.
+
+✅ Correct — forwards the entire subtree:
 
 ```nginx
-location /chatbot/ { proxy_pass http://mcp-agent-ui:5001/; }   # trailing slash strips the prefix
-location = /chatbot { return 308 /chatbot/; }                  # enforce trailing slash
+location /chatbot/ { proxy_pass http://mcp-agent-ui:5001/; }   # subtree → container
+location = /chatbot { return 308 /chatbot/; }                  # bare path → add slash
+```
+
+❌ Wrong — this is the common mistake: an **exact match** sends only `/chatbot`
+to the container while `/chatbot/auth-config`, `/chatbot/run`, etc. fall through
+to Superset (which answers 404):
+
+```nginx
+location = /chatbot { proxy_pass http://mcp-agent-ui:5001/; }  # ONLY /chatbot, subtree leaks to Superset
 ```
 
 If your proxy sends `X-Forwarded-Prefix`, the app uses it automatically and you

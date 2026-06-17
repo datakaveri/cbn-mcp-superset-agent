@@ -288,6 +288,21 @@ def run_web_server(port: int = 5001, host: str = "0.0.0.0"):
     app = Flask(__name__, static_folder=base_dir)
     CORS(app)  # Allow cross-origin requests from any port (browser opening index.html elsewhere)
 
+    # Sub-path support: when deployed behind a proxy under e.g. /chatbot, strip
+    # the prefix from incoming paths so our routes (/, /run, /auth-config) match
+    # whether or not the proxy already stripped it. No-ops at the domain root.
+    _wsgi = app.wsgi_app
+
+    def _strip_prefix(environ, start_response):
+        prefix = APP_BASE_PATH or environ.get("HTTP_X_FORWARDED_PREFIX", "").rstrip("/")
+        path = environ.get("PATH_INFO", "")
+        if prefix and (path == prefix or path.startswith(prefix + "/")):
+            environ["PATH_INFO"] = path[len(prefix):] or "/"
+            environ["SCRIPT_NAME"] = environ.get("SCRIPT_NAME", "") + prefix
+        return _wsgi(environ, start_response)
+
+    app.wsgi_app = _strip_prefix
+
     # Silence Flask's default request logger so our log format stays clean
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
