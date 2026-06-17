@@ -12,66 +12,60 @@ from models import (
     AgentResult, ChartSpec, PipelinePlan, DatasetSchema, PipelineReport,
     ChartResult,
 )
-from config import DATASET_DOMAIN, VALID_CHART_TYPES, MAX_PLAN_RETRIES
+from config import VALID_CHART_TYPES
 
 log = logging.getLogger(__name__)
 
 # ── System prompts ────────────────────────────────────────────────────
 
-PLAN_SYSTEM_PROMPT = f"""You are a Superset dashboard planning agent. Given a user's natural language request, you produce a JSON plan for creating charts and a dashboard.
-
-DATASET CONTEXT:
-{DATASET_DOMAIN}
+PLAN_SYSTEM_PROMPT = f"""You are a Superset dashboard planning agent. You are given a user's natural-language request and a catalog of the datasets that exist in Superset (with their REAL column names and types). You produce a JSON plan for creating charts and a dashboard.
 
 RULES:
 1. Respond ONLY with valid JSON — no text before or after, no markdown fences.
-2. Use exact column names from the dataset (case-sensitive).
-3. Valid chart_type values: {', '.join(VALID_CHART_TYPES.keys())}
-4. For metric, use standard SQL aggregations on real columns (e.g. SUM(amount), COUNT(tx_id)).
-5. The dataset table name is "sqllab_agent".
-6. Always include at least one chart.
+2. From the AVAILABLE DATASETS, choose the SINGLE most relevant dataset for the request. Set "datasets" to exactly that dataset's table name.
+3. Use ONLY column names that exist in the chosen dataset (case-sensitive). Never invent columns.
+4. Valid chart_type values: {', '.join(VALID_CHART_TYPES.keys())}
+5. For metric, use standard SQL aggregations on real columns (e.g. SUM(<numeric_col>), COUNT(*), AVG(<numeric_col>)).
+6. Always include at least one chart. If the request doesn't map cleanly to the data, pick the closest sensible columns from the chosen dataset.
 
 RESPONSE FORMAT:
 {{
-  "datasets": ["sqllab_agent"],
+  "datasets": ["<chosen_table_name>"],
   "dashboard_title": "descriptive title",
   "charts": [
     {{
       "name": "chart display name",
       "chart_type": "bar|line|pie|table|dist_bar|box_plot|scatter|funnel|radar|heatmap|stacked_bar|area|stacked_area|treemap|sunburst|waterfall|big_number|big_number_total",
-      "metric": "SUM(amount)",
-      "metric_column": "amount",
+      "metric": "SUM(<numeric_col>)",
+      "metric_column": "<numeric_col>",
       "aggregate": "SUM",
-      "dimension": "state",
+      "dimension": "<group_by_col>",
       "time_column": null,
       "stack": false,
       "row_limit": null,
       "series_column": null,
       "filters": [
-        {{"col": "status", "op": "=", "val": "COMPLETED"}},
-        {{"col": "amount", "op": ">", "val": 1000}},
-        {{"col": "bank_name", "op": "IN", "val": ["Bank A", "Bank B"]}}
+        {{"col": "<col>", "op": "=", "val": "<value>"}}
       ]
     }}
   ]
 }}
 
 IMPORTANT:
-- metric_column must be the raw column name (e.g. "amount", "tx_id")
-- aggregate must be the SQL function name (e.g. "SUM", "COUNT", "AVG")
-- time_column should be "timestamp" only for time-series charts (line, area)
+- metric_column must be a raw column name from the chosen dataset (or "*" for COUNT(*))
+- aggregate must be the SQL function name (e.g. "SUM", "COUNT", "AVG", "MIN", "MAX")
+- time_column should be a real temporal/timestamp column, set only for time-series charts (line, area)
 - dimension is the primary GROUP BY column (shown on X axis or as slices)
-- series_column: set this when you want to split bars/lines by a second dimension (e.g. "type" to get DEPOSIT vs WITHDRAWAL as separate series in a grouped/stacked bar)
+- series_column: set this to split bars/lines by a second dimension (grouped/stacked series)
 - stack: set true for stacked_bar or stacked_area charts
-- row_limit: integer to limit results (e.g. 10 for "top 10 banks"). When set, SQL will ORDER BY metric DESC LIMIT N before charting.
+- row_limit: integer to limit results (e.g. 10 for "top 10"). When set, SQL will ORDER BY metric DESC LIMIT N before charting.
 - filters use MCP format — valid ops: =, !=, >, <, >=, <=, LIKE, ILIKE, NOT LIKE, IN, NOT IN
   * Use "=" (not "==") for equality
   * val for IN/NOT IN must be a JSON array: ["val1", "val2"]
   * val for numeric comparisons must be a number, not a string
-- Only filter on columns that actually exist in the dataset
+- Only filter on columns that actually exist in the chosen dataset
 - For "top N" requests, set row_limit=N and do NOT add a filter for it
-- For stacked charts (inflow vs outflow, deposits vs withdrawals by dimension), set series_column to the column that splits the stacks (e.g. "type") and dimension to the grouping axis (e.g. "location_code" or "state")
-- For heatmap charts: dimension = the ROW axis (e.g. "bank_name"), series_column = the COLUMN axis (e.g. "channel_type"). Always set series_column for heatmaps.
+- For heatmap charts: dimension = the ROW axis, series_column = the COLUMN axis. Always set series_column for heatmaps.
 """
 
 REFINEMENT_SYSTEM_PROMPT = """You are correcting a Superset dashboard plan based on actual dataset schema.
@@ -100,12 +94,18 @@ class Orchestrator:
     def __init__(self, llm: LLMClient):
         self.llm = llm
 
-    def generate_plan(self, user_query: str) -> AgentResult:
-        """Phase 1: Parse user intent and generate a pipeline plan."""
-        log.info("Generating plan for: '%s'", user_query[:100])
+    def generate_plan(self, user_query: str, catalog: list[DatasetSchema]) -> AgentResult:
+        """Phase 1: Parse user intent and plan against the real dataset catalog."""
+        log.info("Generating plan for '%s' against %d datasets", user_query[:100], len(catalog))
+
+        user_prompt = (
+            "AVAILABLE DATASETS (choose the single most relevant one; use ONLY its columns):\n"
+            f"{self._format_catalog(catalog)}\n\n"
+            f"USER REQUEST:\n{user_query}"
+        )
 
         try:
-            data = self.llm.generate_json(PLAN_SYSTEM_PROMPT, user_query)
+            data = self.llm.generate_json(PLAN_SYSTEM_PROMPT, user_prompt)
         except LLMError as e:
             return AgentResult.fail(f"LLM plan generation failed: {e}")
 
@@ -113,9 +113,21 @@ class Orchestrator:
         if plan is None:
             return AgentResult.fail(f"Could not parse plan from LLM response: {data}")
 
-        log.info("Plan generated: %d charts, dashboard='%s'",
-                 len(plan.charts), plan.dashboard_title)
+        log.info("Plan generated: %d charts, dataset=%s, dashboard='%s'",
+                 len(plan.charts), plan.datasets, plan.dashboard_title)
         return AgentResult.ok(plan)
+
+    @staticmethod
+    def _format_catalog(catalog: list[DatasetSchema]) -> str:
+        """Render the dataset catalog (table name + columns) for the LLM prompt."""
+        lines = []
+        for s in catalog:
+            if s.columns:
+                cols = ", ".join(f"{n} ({t})" for n, t in list(s.columns.items())[:40])
+            else:
+                cols = "(columns unavailable)"
+            lines.append(f'- "{s.table_name}": {cols}')
+        return "\n".join(lines) if lines else "(no datasets available)"
 
     def refine_plan(
         self,
@@ -193,10 +205,10 @@ Please fix the plan to use only valid column names and correct any issues."""
                 charts.append(ChartSpec(
                     name=c.get("name", "Untitled Chart"),
                     chart_type=c.get("chart_type", "bar"),
-                    metric=c.get("metric", "COUNT(tx_id)"),
-                    metric_column=c.get("metric_column", "tx_id"),
+                    metric=c.get("metric", "COUNT(*)"),
+                    metric_column=c.get("metric_column", "*"),
                     aggregate=c.get("aggregate", "COUNT"),
-                    dimension=c.get("dimension", "state"),
+                    dimension=c.get("dimension", ""),
                     time_column=c.get("time_column"),
                     filters=c.get("filters"),
                     stack=bool(c.get("stack", False)),
@@ -209,7 +221,7 @@ Please fix the plan to use only valid column names and correct any issues."""
                 return None
 
             return PipelinePlan(
-                datasets=data.get("datasets", ["sqllab_agent"]),
+                datasets=data.get("datasets", []),
                 charts=charts,
                 dashboard_title=data.get("dashboard_title", "Agent Dashboard"),
             )

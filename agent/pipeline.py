@@ -127,9 +127,21 @@ class Pipeline:
             report.errors.append(f"Health check failed: {health.error}")
             return report
 
-        # ── Phase 1: Plan Generation ──
+        # ── Phase 1: Plan Generation (reads the live dataset catalog first) ──
+        self._emit(Phase.PLAN_GENERATION, "info", "Reading available datasets from Superset...")
+        catalog_result = self.dataset_agent.build_catalog()
+        if not catalog_result.success:
+            self._emit(Phase.PLAN_GENERATION, "error", f"Catalog failed: {catalog_result.error}")
+            report = PipelineReport()
+            report.errors.append(f"Dataset catalog failed: {catalog_result.error}")
+            return report
+
+        catalog: list[DatasetSchema] = catalog_result.data
+        preview = ", ".join(c.table_name for c in catalog[:8]) + ("…" if len(catalog) > 8 else "")
+        self._emit(Phase.PLAN_GENERATION, "info", f"{len(catalog)} datasets available: {preview}")
+
         self._emit(Phase.PLAN_GENERATION, "info", f"Generating plan from: '{user_query[:80]}...'")
-        plan_result = self.orchestrator.generate_plan(user_query)
+        plan_result = self.orchestrator.generate_plan(user_query, catalog)
         if not plan_result.success:
             self._emit(Phase.PLAN_GENERATION, "error", f"Plan failed: {plan_result.error}")
             report = PipelineReport()
@@ -143,19 +155,20 @@ class Pipeline:
             self._emit(Phase.PLAN_GENERATION, "info",
                        f"  Chart {i+1}: {c.name} ({c.chart_type}) — {c.metric} by {c.dimension}")
 
-        # ── Phase 2: Dataset Discovery ──
-        self._emit(Phase.DATASET_DISCOVERY, "info", f"Discovering datasets: {plan.datasets}")
-        ds_result = self.dataset_agent.discover(plan.datasets)
-        if not ds_result.success:
-            self._emit(Phase.DATASET_DISCOVERY, "error", f"Dataset discovery failed: {ds_result.error}")
-            report = PipelineReport()
-            report.errors.append(f"Dataset discovery failed: {ds_result.error}")
-            return report
+        # ── Phase 2: Dataset Discovery (resolve the dataset the LLM chose) ──
+        self._emit(Phase.DATASET_DISCOVERY, "info", f"Selecting dataset: {plan.datasets}")
+        schema = self.dataset_agent.select(plan.datasets, catalog)
+        if schema is None:
+            schema = catalog[0]
+            self._emit(Phase.DATASET_DISCOVERY, "warning",
+                       f"Planned dataset {plan.datasets} not found — falling back to '{schema.table_name}'")
+            plan.datasets = [schema.table_name]
 
-        schemas: list[DatasetSchema] = ds_result.data
-        schema = schemas[0]
+        # Catalog is names-only; load the chosen dataset's columns + database_id now.
+        schema = self.dataset_agent.enrich(schema)
+
         self._emit(Phase.DATASET_DISCOVERY, "success",
-                   f"Found '{schema.name}' (id={schema.id}, db_id={schema.database_id}, "
+                   f"Using '{schema.name}' (id={schema.id}, db_id={schema.database_id}, "
                    f"{len(schema.columns)} columns)")
         self._emit(Phase.DATASET_DISCOVERY, "info",
                    f"  Columns: {', '.join(list(schema.columns.keys())[:12])}...")

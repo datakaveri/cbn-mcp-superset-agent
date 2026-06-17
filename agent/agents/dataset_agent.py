@@ -18,9 +18,69 @@ class DatasetAgent:
     def __init__(self, mcp: MCPClient):
         self.mcp = mcp
  
+    @staticmethod
+    def _extract_list(datasets_raw) -> list[dict]:
+        """Normalize the MCP list_datasets payload to a list of dataset dicts."""
+        # The Superset MCP returns {"datasets": [...], "count": N}
+        if isinstance(datasets_raw, dict):
+            return (
+                datasets_raw.get("datasets")
+                or datasets_raw.get("result")
+                or datasets_raw.get("data")
+                or []
+            )
+        if isinstance(datasets_raw, list):
+            return datasets_raw
+        return []
+
+    def build_catalog(self, page_size: int = 100) -> AgentResult:
+        """
+        List datasets in Superset (names only — no per-dataset column fetch, so
+        it's a single fast call). Columns for the dataset the planner ultimately
+        picks are loaded later via enrich(). page_size=100 is the MCP's max.
+        Returns AgentResult with a list of DatasetSchema (columns empty).
+        """
+        list_result = self.mcp.list_datasets(page_size=page_size)
+        if not list_result.success:
+            return AgentResult.fail(f"Failed to list datasets: {list_result.error}")
+
+        datasets_list = self._extract_list(list_result.data)
+        if not datasets_list:
+            return AgentResult.fail("No datasets available in Superset")
+
+        catalog = [
+            DatasetSchema(id=ds["id"], name=ds["table_name"],
+                          database_id=0, table_name=ds["table_name"])
+            for ds in datasets_list
+            if ds.get("id") and ds.get("table_name")
+        ]
+        log.info("Catalog built: %d datasets", len(catalog))
+        if not catalog:
+            return AgentResult.fail("No usable datasets found in Superset")
+        return AgentResult.ok(catalog)
+
+    def enrich(self, schema: DatasetSchema) -> DatasetSchema:
+        """Public wrapper: load columns + database_id for a chosen dataset."""
+        return self._enrich_schema(schema) or schema
+
+    def select(self, names: list[str], catalog: list[DatasetSchema]) -> Optional[DatasetSchema]:
+        """Pick the catalog dataset matching one of the planned names (exact, then fuzzy)."""
+        for name in names:
+            nl = name.lower().strip()
+            for s in catalog:
+                if nl == s.table_name.lower():
+                    return s
+        for name in names:
+            nl = name.lower().strip()
+            for s in catalog:
+                tn = s.table_name.lower()
+                if nl and (nl in tn or tn in nl):
+                    return s
+        return None
+
     def discover(self, dataset_names: list[str]) -> AgentResult:
         """
-        Find datasets matching the plan's requested names.
+        Find datasets matching the plan's requested names (legacy direct path).
         Returns AgentResult with a list of DatasetSchema objects.
         """
         # Step 1: List all datasets from Superset via MCP
@@ -29,23 +89,9 @@ class DatasetAgent:
             return AgentResult.fail(
                 f"Failed to list datasets: {list_result.error}"
             )
- 
-        datasets_raw = list_result.data
- 
-        # The Superset MCP returns {"datasets": [...], "count": N}
-        # Fall back to other known shapes just in case
-        if isinstance(datasets_raw, dict):
-            datasets_list = (
-                datasets_raw.get("datasets")
-                or datasets_raw.get("result")
-                or datasets_raw.get("data")
-                or []
-            )
-        elif isinstance(datasets_raw, list):
-            datasets_list = datasets_raw
-        else:
-            datasets_list = []
- 
+
+        datasets_list = self._extract_list(list_result.data)
+
         log.info("Found %d datasets in Superset", len(datasets_list))
  
         # Step 2: Match requested names against available datasets
