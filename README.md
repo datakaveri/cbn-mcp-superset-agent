@@ -126,8 +126,9 @@ All settings are read from environment variables with sensible defaults. A `.env
 | Variable | Default | Description |
 |---|---|---|
 | `SUPERSET_BASE_URL` | `http://localhost:9001` | Superset base URL |
-| `SUPERSET_USERNAME` | `admin` | Superset login username |
-| `SUPERSET_PASSWORD` | `admin` | Superset login password |
+| `SUPERSET_USERNAME` | `admin` | Superset login username (only for the optional REST health-check login) |
+| `SUPERSET_PASSWORD` | `admin` | Superset login password (only for the optional REST health-check login) |
+| `SUPERSET_LOGIN_ENABLED` | `true` | Attempt a Superset REST login during health check. The token is unused (MCP drives Superset); set `false` for SSO-only Superset. A failed login is a warning, not fatal. |
 | `MCP_URL` | `https://dashboard.idx-ng.com/mcp` | Superset MCP service endpoint |
 | `MCP_AUTH_TOKEN` | _(none)_ | **Required for the hosted MCP.** Bearer token sent as `Authorization: Bearer …` on every MCP request. |
 | `MCP_DEV_USERNAME` | `admin` | Username used by the MCP service (must match `superset_config.py`) |

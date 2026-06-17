@@ -20,6 +20,10 @@ SUPERSET_BASE_URL = os.getenv("SUPERSET_BASE_URL", "http://localhost:9001")
 SUPERSET_API_URL = f"{SUPERSET_BASE_URL}/api/v1"
 SUPERSET_USERNAME = os.getenv("SUPERSET_USERNAME", "admin")
 SUPERSET_PASSWORD = os.getenv("SUPERSET_PASSWORD", "admin")
+# The pipeline drives Superset entirely through MCP (MCP_AUTH_TOKEN); the direct
+# REST login is a legacy health-check gate whose token nothing consumes. Disable
+# it when Superset is SSO-only (no db-provider admin login). Default true.
+SUPERSET_LOGIN_ENABLED = os.getenv("SUPERSET_LOGIN_ENABLED", "true").lower() not in ("0", "false", "no")
 
 # ── Web UI ────────────────────────────────────────────────────────────
 # Sub-path the web UI is served under behind a reverse proxy, e.g. "/chatbot".

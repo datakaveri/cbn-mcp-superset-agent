@@ -34,7 +34,7 @@ from agents.chart_agent import ChartAgent
 from agents.dashboard_agent import DashboardAgent
 from keycloak_auth import require_auth
 from config import (
-    MAX_PLAN_RETRIES, APP_BASE_PATH,
+    MAX_PLAN_RETRIES, APP_BASE_PATH, SUPERSET_LOGIN_ENABLED,
     KEYCLOAK_ENABLED, KEYCLOAK_URL, KEYCLOAK_REALM,
     KEYCLOAK_CLIENT_ID, KEYCLOAK_REQUIRED_ROLE,
 )
@@ -95,11 +95,19 @@ class Pipeline:
             return AgentResult.fail(f"MCP health check failed: {mcp_result.error}")
         self._emit(Phase.HEALTH_CHECK, "success", "MCP health check passed")
 
-        auth_result = self.auth.login()
-        if not auth_result.success:
-            self._emit(Phase.HEALTH_CHECK, "error", f"Superset login failed: {auth_result.error}")
-            return AgentResult.fail(f"Superset login failed: {auth_result.error}")
-        self._emit(Phase.HEALTH_CHECK, "success", "Superset login successful")
+        # Superset REST login is optional: the pipeline operates through MCP and
+        # never uses this token. Skip when disabled, and treat failure as a
+        # non-fatal warning so an SSO-only Superset doesn't block the run.
+        if not SUPERSET_LOGIN_ENABLED:
+            self._emit(Phase.HEALTH_CHECK, "info",
+                       "Superset REST login skipped (SUPERSET_LOGIN_ENABLED=false); using MCP")
+        else:
+            auth_result = self.auth.login()
+            if auth_result.success:
+                self._emit(Phase.HEALTH_CHECK, "success", "Superset login successful")
+            else:
+                self._emit(Phase.HEALTH_CHECK, "warning",
+                           f"Superset login failed (continuing — MCP handles operations): {auth_result.error}")
 
         return AgentResult.ok({"mcp": "ok", "superset": "ok"})
 
