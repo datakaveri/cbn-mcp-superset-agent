@@ -79,8 +79,9 @@ class DatasetSchema:
     columns: dict[str, str] = field(default_factory=dict)  # {col_name: col_type}
     table_name: str = ""
     schema_name: str = ""   # DB schema/namespace (e.g. ClickHouse "cbn_simulation_data")
- 
- 
+    sql: str = ""           # defining SQL for VIRTUAL datasets (empty for physical tables)
+
+
 @dataclass
 class ChartResult:
     """Result of creating a single chart."""

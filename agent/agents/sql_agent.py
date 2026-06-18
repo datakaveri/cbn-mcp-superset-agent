@@ -80,7 +80,18 @@ class SQLAgent:
 
     def _probe_chart(self, chart: ChartSpec, schema: DatasetSchema) -> AgentResult:
         """Build and run a probe SQL query for a single ChartSpec."""
-        table = schema.table_name or schema.name
+        # Resolve the FROM source:
+        #  • Virtual dataset (has defining SQL, no physical table) → wrap it as a
+        #    subquery, exactly like Superset does: FROM (<sql>) AS virtual_table.
+        #  • Physical table → qualify with its schema ("<schema>.<table>"); the
+        #    execute_sql `schema` param alone does NOT scope an unqualified FROM
+        #    on ClickHouse (→ UNKNOWN_TABLE).
+        if schema.sql:
+            table = f"({schema.sql}) AS virtual_table"
+        else:
+            table = schema.table_name or schema.name
+            if schema.schema_name and "." not in table:
+                table = f"{schema.schema_name}.{table}"
         metric_expr = self._build_metric_expr(chart)
         where_clause = self._build_where_clause(chart.filters)
 

@@ -192,6 +192,10 @@ class DatasetAgent:
         # (e.g. ClickHouse "cbn_simulation_data" rather than the default "public").
         if result.get("schema"):
             schema.schema_name = result["schema"]
+
+        # Virtual datasets have no physical table — capture their defining SQL so
+        # probes can wrap it as "FROM (<sql>) AS virtual_table" (what Superset does).
+        schema.sql = (result.get("sql") or "").strip()
  
         # Warn if timestamp is stored as VARCHAR — temporal charts need CAST
         ts_type = columns.get("timestamp", "")

@@ -164,7 +164,15 @@ class MCPClient:
         if isinstance(parsed, dict) and parsed.get("success") is False:
             err = parsed.get("error")
             if isinstance(err, dict):
-                msg = err.get("message") or err.get("details") or str(err)
+                # Combine message + details — the MCP often puts the actionable
+                # cause in "details" (e.g. message="Chart configuration incompatible
+                # with data", details="Cannot apply AVG to non-numeric column …").
+                message = (err.get("message") or "").strip()
+                details = (err.get("details") or "").strip()
+                if details and details != message:
+                    msg = f"{message} — {details}" if message else details
+                else:
+                    msg = message or str(err)
             else:
                 msg = str(err) if err else "MCP tool reported success=false"
             import html
