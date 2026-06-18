@@ -512,6 +512,14 @@
       #result-bar { padding: 12px 14px; }
       #result-bar.visible { flex-direction: column; align-items: flex-start; gap: 8px; }
       .result-meta { margin-left: 0; }
+
+      /* Dashboard preview needs an explicit height on mobile. The natural-scroll
+         layout above gives `main` height:auto, so the flex chain has no definite
+         height — the embedded-SDK iframe (height:100%) would collapse to 0 and
+         render blank. Pin a viewport-based height so the iframe has room. */
+      #dash-preview.visible { min-height: 80vh; min-height: 80dvh; }
+      #dash-mount { min-height: 72vh; min-height: 72dvh; }
+      #dash-mount iframe { height: 72vh; height: 72dvh; }
     }
 
     /* ── Phones: trim header chrome further ── */
