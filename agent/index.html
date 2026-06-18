@@ -412,35 +412,12 @@
     .result-bar.success-bar .result-label { color: var(--green); }
     .result-bar.error-bar   .result-label { color: var(--red); }
 
-    .result-url {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 12px;
-      color: var(--blue);
-      text-decoration: underline;
-      cursor: pointer;
-      word-break: break-all;
-    }
-
     .result-meta {
       font-size: 11px;
       color: var(--text-dim);
       font-family: 'JetBrains Mono', monospace;
       margin-left: auto;
     }
-
-    .open-btn {
-      background: var(--green-dim);
-      color: var(--green);
-      border: 1px solid var(--green);
-      padding: 6px 16px;
-      font-size: 12px;
-      border-radius: 6px;
-      text-decoration: none;
-      font-family: 'Inter', sans-serif;
-      font-weight: 500;
-    }
-
-    .open-btn:hover { background: rgba(74,222,128,0.18); }
 
     /* ── Empty state ── */
     .empty-state {
@@ -535,7 +512,6 @@
       #result-bar { padding: 12px 14px; }
       #result-bar.visible { flex-direction: column; align-items: flex-start; gap: 8px; }
       .result-meta { margin-left: 0; }
-      .open-btn { width: 100%; text-align: center; padding: 10px; }
     }
 
     /* ── Phones: trim header chrome further ── */
@@ -730,8 +706,6 @@
     <!-- Result bar -->
     <div id="result-bar">
       <span class="result-label" id="result-label">✅ Dashboard ready</span>
-      <a class="result-url" id="result-url" href="#" target="_blank"></a>
-      <a class="open-btn" id="open-btn" href="#" target="_blank">Open dashboard ↗</a>
       <div class="result-meta" id="result-meta"></div>
     </div>
 
@@ -740,7 +714,6 @@
       <div class="dash-head">
         <span class="title">📊 Dashboard preview</span>
         <span class="spacer"></span>
-        <a id="dash-open" href="#" target="_blank">Open in Superset ↗</a>
         <button onclick="closePreview()">✕ Back to logs</button>
       </div>
       <div class="dash-hint" id="dash-hint">Loading embedded dashboard…</div>
@@ -899,8 +872,6 @@
   function showResult(success, url, meta, uuid) {
     const bar = document.getElementById('result-bar');
     const label = document.getElementById('result-label');
-    const urlEl = document.getElementById('result-url');
-    const openBtn = document.getElementById('open-btn');
     const metaEl = document.getElementById('result-meta');
 
     bar.style.display = 'flex';
@@ -908,17 +879,9 @@
 
     label.textContent = success ? '✅ Dashboard ready' : '⚠ Pipeline finished with errors';
 
-    if (url) {
-      urlEl.textContent = url;
-      urlEl.href = url;
-      openBtn.href = url;
-      openBtn.style.display = '';
-      // Embed the dashboard inline (guest-token SDK), iframe fallback otherwise
-      showDashboardPreview(url, uuid);
-    } else {
-      urlEl.textContent = '';
-      openBtn.style.display = 'none';
-    }
+    // The dashboard is only ever viewed inline within this app — no outbound
+    // Superset link. Embed it via the guest-token SDK (iframe fallback otherwise).
+    if (url) showDashboardPreview(url, uuid);
 
     metaEl.textContent = meta || '';
   }
@@ -950,7 +913,6 @@
     const wrap = document.getElementById('dash-preview');
     const mount = document.getElementById('dash-mount');
     const hint = document.getElementById('dash-hint');
-    document.getElementById('dash-open').href = url;
     document.getElementById('log-container').style.display = 'none';
     mount.innerHTML = '';
     wrap.classList.add('visible');
@@ -974,7 +936,7 @@
       } catch (e) {
         console.warn('Embedded SDK failed, falling back to iframe:', e);
         hint.style.display = '';
-        hint.textContent = 'Embedded view unavailable — trying direct view. If blank, use “Open in Superset ↗”.';
+        hint.textContent = 'Loading dashboard…';
         mount.innerHTML = '';
       }
     }

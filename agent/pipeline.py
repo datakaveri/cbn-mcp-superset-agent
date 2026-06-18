@@ -202,6 +202,28 @@ class Pipeline:
                 self._emit(Phase.SQL_VALIDATION, "warning",
                            f"  '{chart_name}': {preview.get('error', 'unknown error')}")
 
+        # ── Keep only working charts ──
+        # A chart whose SQL probe failed will render broken (or empty) in the
+        # dashboard. Drop those so the inline embedded dashboard shows ONLY charts
+        # that actually work. Guard against false negatives: if nothing validated,
+        # keep the full set and let chart creation's self-correction try anyway.
+        valid_names = {
+            c.name for c in plan.charts
+            if (sql_previews.get(c.name) or {}).get("valid")
+        }
+        if valid_names and len(valid_names) < len(plan.charts):
+            for c in plan.charts:
+                if c.name not in valid_names:
+                    err = (sql_previews.get(c.name) or {}).get("error") or "failed validation"
+                    self._emit(Phase.SQL_VALIDATION, "warning",
+                               f"  Dropping '{c.name}' — won't render ({err})")
+            plan.charts = [c for c in plan.charts if c.name in valid_names]
+            self._emit(Phase.SQL_VALIDATION, "success",
+                       f"Keeping {len(plan.charts)} working chart(s)")
+        elif not valid_names:
+            self._emit(Phase.SQL_VALIDATION, "warning",
+                       "No charts passed validation — attempting all (self-correction may fix them)")
+
         # ── Phase 4: Chart Creation ──
         self._emit(Phase.CHART_CREATION, "info", f"Creating {len(plan.charts)} charts...")
         chart_result = self.chart_agent.create_charts(plan.charts, schema)
