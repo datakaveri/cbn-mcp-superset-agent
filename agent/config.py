@@ -31,8 +31,6 @@ SUPERSET_LOGIN_ENABLED = os.getenv("SUPERSET_LOGIN_ENABLED", "true").lower() not
 SUPERSET_EMBED_ENABLED = os.getenv("SUPERSET_EMBED_ENABLED", "true").lower() not in ("0", "false", "no")
 # Public Superset origin for the embedded SDK (defaults to SUPERSET_BASE_URL).
 SUPERSET_DOMAIN = os.getenv("SUPERSET_DOMAIN", SUPERSET_BASE_URL)
-# Endpoint that mints a Superset guest token (same as ui-cbn). Same-origin → relative is fine.
-SUPERSET_GUEST_TOKEN_URL = os.getenv("SUPERSET_GUEST_TOKEN_URL", "/middleware/middleware/guest_token")
 # Register each created dashboard for embedding via Superset REST (so /embedded/<uuid>
 # resolves for the guest-token preview). Requires a working SUPERSET_USERNAME/PASSWORD
 # (db provider). Non-fatal if it fails — the preview just won't load.

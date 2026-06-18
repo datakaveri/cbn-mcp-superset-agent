@@ -61,43 +61,79 @@ class SupersetAuth:
         except requests.RequestException as e:
             return AgentResult.fail(f"Superset login failed: {e}")
 
+    def _csrf(self) -> str:
+        """Fetch a CSRF token (shares the session cookie)."""
+        r = self._http.get(
+            f"{SUPERSET_API_URL}/security/csrf_token/",
+            headers={"Authorization": f"Bearer {self._token}"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        r.raise_for_status()
+        return r.json().get("result") or ""
+
+    def _api_post(self, path: str, body: dict):
+        """
+        Authenticated POST to a Superset API path, with one re-login retry on 401
+        (the access token expires on a long-running server). Returns the Response
+        or None on failure.
+        """
+        for attempt in (1, 2):
+            if not self._token and not self.login().success:
+                return None
+            try:
+                resp = self._http.post(
+                    f"{SUPERSET_API_URL}{path}",
+                    json=body,
+                    headers={
+                        "Authorization": f"Bearer {self._token}",
+                        "X-CSRFToken": self._csrf(),
+                        "Content-Type": "application/json",
+                        "Referer": SUPERSET_BASE_URL,
+                    },
+                    timeout=REQUEST_TIMEOUT,
+                )
+                if resp.status_code == 401 and attempt == 1:
+                    self._token = None   # expired — re-login and retry once
+                    continue
+                resp.raise_for_status()
+                return resp
+            except requests.RequestException as e:
+                if attempt == 2:
+                    log.warning("Superset POST %s failed: %s", path, e)
+                    return None
+        return None
+
     def register_embedding(self, dashboard_id, allowed_domains=None):
         """
         Register a dashboard for embedding (POST /dashboard/{id}/embedded) so the
         guest-token preview's /embedded/<uuid> page resolves. Returns the embedded
-        uuid, or None on failure (non-fatal). Logs in on demand.
+        uuid, or None on failure (non-fatal).
         """
-        if not self._token and not self.login().success:
-            log.warning("Embed registration skipped — Superset login failed (check SUPERSET_USERNAME/PASSWORD)")
+        resp = self._api_post(
+            f"/dashboard/{dashboard_id}/embedded",
+            {"allowed_domains": allowed_domains or []},
+        )
+        if resp is None:
+            log.warning("Embed registration failed for dashboard %s (check SUPERSET creds)", dashboard_id)
             return None
+        uuid = (resp.json().get("result") or {}).get("uuid")
+        log.info("Registered dashboard %s for embedding (embed uuid=%s)", dashboard_id, uuid)
+        return uuid
 
-        try:
-            csrf_resp = self._http.get(
-                f"{SUPERSET_API_URL}/security/csrf_token/",
-                headers={"Authorization": f"Bearer {self._token}"},
-                timeout=REQUEST_TIMEOUT,
-            )
-            csrf_resp.raise_for_status()
-            csrf = csrf_resp.json().get("result")
-
-            resp = self._http.post(
-                f"{SUPERSET_API_URL}/dashboard/{dashboard_id}/embedded",
-                json={"allowed_domains": allowed_domains or []},
-                headers={
-                    "Authorization": f"Bearer {self._token}",
-                    "X-CSRFToken": csrf or "",
-                    "Content-Type": "application/json",
-                    "Referer": SUPERSET_BASE_URL,
-                },
-                timeout=REQUEST_TIMEOUT,
-            )
-            resp.raise_for_status()
-            uuid = (resp.json().get("result") or {}).get("uuid")
-            log.info("Registered dashboard %s for embedding (embed uuid=%s)", dashboard_id, uuid)
-            return uuid
-        except requests.RequestException as e:
-            log.warning("Embed registration failed for dashboard %s: %s", dashboard_id, e)
+    def mint_guest_token(self, resource_uuid, rls=None):
+        """
+        Mint a Superset guest token scoped to an embedded dashboard, so the agent
+        UI can render it inline without the viewer owning the dashboard. Returns
+        the token string, or None on failure.
+        """
+        resp = self._api_post("/security/guest_token/", {
+            "user": {"username": "embed_viewer", "first_name": "Embed", "last_name": "Viewer"},
+            "resources": [{"type": "dashboard", "id": resource_uuid}],
+            "rls": rls or [],
+        })
+        if resp is None:
             return None
+        return resp.json().get("token")
 
     def close(self):
         self._http.close()

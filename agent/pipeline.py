@@ -37,7 +37,7 @@ from config import (
     MAX_PLAN_RETRIES, APP_BASE_PATH, SUPERSET_LOGIN_ENABLED,
     KEYCLOAK_ENABLED, KEYCLOAK_URL, KEYCLOAK_REALM,
     KEYCLOAK_CLIENT_ID, KEYCLOAK_REQUIRED_ROLE,
-    SUPERSET_EMBED_ENABLED, SUPERSET_DOMAIN, SUPERSET_GUEST_TOKEN_URL,
+    SUPERSET_EMBED_ENABLED, SUPERSET_DOMAIN,
     SUPERSET_EMBED_REGISTER, SUPERSET_EMBED_ALLOWED_DOMAINS,
 )
 
@@ -369,9 +369,26 @@ def run_web_server(port: int = 5001, host: str = "0.0.0.0"):
             "embed": {
                 "enabled": SUPERSET_EMBED_ENABLED,
                 "supersetDomain": SUPERSET_DOMAIN,
-                "guestTokenUrl": SUPERSET_GUEST_TOKEN_URL,
+                # The agent mints guest tokens itself at POST /guest-token.
             },
         }
+
+    # Guest token for the inline embedded-dashboard preview. The agent mints it
+    # via Superset (admin creds) so the viewer needn't own the dashboard. Gated
+    # by @require_auth so only authenticated users can request one.
+    _embed_auth = SupersetAuth()
+
+    @app.route("/guest-token", methods=["POST"])
+    @require_auth
+    def guest_token():
+        body = request.get_json(force=True, silent=True) or {}
+        uuid = (body.get("uuid") or body.get("dashboard_id") or "").strip()
+        if not uuid:
+            return {"error": "uuid required"}, 400
+        token = _embed_auth.mint_guest_token(uuid)
+        if not token:
+            return {"error": "could not mint guest token"}, 502
+        return {"token": token}
 
     # ── PWA assets ───────────────────────────────────────────────────
     @app.route("/manifest.webmanifest")

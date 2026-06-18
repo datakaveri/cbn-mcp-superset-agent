@@ -923,17 +923,17 @@
     return url + (url.includes('?') ? '&' : '?') + 'standalone=1';
   }
 
-  // Fetch a Superset guest token (scoped to the dashboard) from the middleware.
+  // Fetch a Superset guest token (scoped to the dashboard) from the agent's own
+  // backend, which mints it via Superset. Carries the Keycloak token for @require_auth.
   async function fetchGuestToken(dashUuid) {
-    const cfg = (window.__cfg && window.__cfg.embed) || {};
     const token = window.__kc ? await getAuthToken() : null;
-    const resp = await fetch(cfg.guestTokenUrl, {
+    const resp = await fetch(apiUrl('guest-token'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { 'Authorization': 'Bearer ' + token } : {}),
       },
-      body: JSON.stringify({ access_token: token, dashboard_id: dashUuid }),
+      body: JSON.stringify({ uuid: dashUuid }),
     });
     if (!resp.ok) throw new Error('guest token request failed (' + resp.status + ')');
     const data = await resp.json().catch(() => null);
@@ -954,7 +954,7 @@
     const embedFn = window.__embedDashboard;
 
     // Preferred: guest-token embed (works regardless of per-user Superset access)
-    if (cfg.enabled && uuid && embedFn && cfg.supersetDomain && cfg.guestTokenUrl) {
+    if (cfg.enabled && uuid && embedFn && cfg.supersetDomain) {
       hint.textContent = 'Loading embedded dashboard…';
       try {
         await embedFn({
