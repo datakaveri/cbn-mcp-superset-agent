@@ -8,6 +8,7 @@
   <!-- PWA -->
   <link rel="manifest" href="manifest.webmanifest" />
   <meta name="theme-color" content="#6c5ce7" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="MCP Agent" />
@@ -749,6 +750,10 @@
 
 </main>
 
+<!-- Superset Embedded SDK (official UMD bundle — exposes window.supersetEmbeddedSdk).
+     The jsdelivr +esm build mis-bundles its switchboard dep, so use the UMD bundle. -->
+<script src="https://cdn.jsdelivr.net/npm/@superset-ui/embedded-sdk@0.1.2/bundle/index.js"></script>
+
 <script>
   // ── Backend config ─────────────────────────────────────────────
   // Empty → same-origin, RELATIVE URLs that resolve against <base href> so the
@@ -951,7 +956,7 @@
     wrap.classList.add('visible');
 
     const cfg = (window.__cfg && window.__cfg.embed) || {};
-    const embedFn = window.__embedDashboard;
+    const embedFn = window.supersetEmbeddedSdk && window.supersetEmbeddedSdk.embedDashboard;
 
     // Preferred: guest-token embed (works regardless of per-user Superset access)
     if (cfg.enabled && uuid && embedFn && cfg.supersetDomain) {
@@ -1274,17 +1279,6 @@
     setInterval(() => kc.updateToken(60).catch(() => {}), 30000);
   }
   boot();
-
-  // ── Superset Embedded SDK (for the inline dashboard preview) ──
-  // Loaded once; showDashboardPreview() uses window.__embedDashboard if present.
-  (async () => {
-    try {
-      const m = await import('https://cdn.jsdelivr.net/npm/@superset-ui/embedded-sdk@0.1.2/+esm');
-      window.__embedDashboard = m.embedDashboard || (m.default && m.default.embedDashboard);
-    } catch (e) {
-      console.warn('Embedded SDK failed to load; preview will use iframe fallback:', e);
-    }
-  })();
 
   // ── Service worker (PWA) ──────────────────────────────────────
   if ('serviceWorker' in navigator) {
