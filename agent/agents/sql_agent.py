@@ -115,9 +115,18 @@ class SQLAgent:
                 f"LIMIT {limit}"
             )
 
+        # ── No-dimension aggregate (e.g. big_number) ───────────────────
+        elif not chart.dimension:
+            sql = (
+                f"SELECT {metric_expr} AS metric_val "
+                f"FROM {table} "
+                f"{where_clause}"
+                f"LIMIT {limit}"
+            )
+
         # ── All other chart families ───────────────────────────────────
         else:
-            dimension = chart.dimension or "state"
+            dimension = chart.dimension
             select_cols = f"{dimension}, {metric_expr} AS metric_val"
             group_cols = dimension
 
@@ -138,7 +147,10 @@ class SQLAgent:
 
         log.info("SQL probe for '%s': %s", chart.name, sql)
 
-        result = self.mcp.execute_sql(schema.database_id, sql)
+        # Run against the dataset's real schema (ClickHouse uses a named DB, not "public")
+        result = self.mcp.execute_sql(
+            schema.database_id, sql, schema=schema.schema_name or "public"
+        )
         if not result.success:
             return result
 

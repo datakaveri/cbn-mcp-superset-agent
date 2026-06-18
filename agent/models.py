@@ -78,6 +78,7 @@ class DatasetSchema:
     database_id: int
     columns: dict[str, str] = field(default_factory=dict)  # {col_name: col_type}
     table_name: str = ""
+    schema_name: str = ""   # DB schema/namespace (e.g. ClickHouse "cbn_simulation_data")
  
  
 @dataclass

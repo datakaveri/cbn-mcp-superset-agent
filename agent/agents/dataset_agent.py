@@ -187,6 +187,11 @@ class DatasetAgent:
         # Refresh table_name from the full response
         if result.get("table_name"):
             schema.table_name = result["table_name"]
+
+        # Capture the DB schema/namespace so probe SQL runs against the right one
+        # (e.g. ClickHouse "cbn_simulation_data" rather than the default "public").
+        if result.get("schema"):
+            schema.schema_name = result["schema"]
  
         # Warn if timestamp is stored as VARCHAR — temporal charts need CAST
         ts_type = columns.get("timestamp", "")

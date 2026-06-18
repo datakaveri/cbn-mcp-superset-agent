@@ -270,9 +270,13 @@ class ChartAgent:
         if is_stacked:
             config["stack"] = True
 
-        # Determine X axis: temporal vs categorical
+        # Determine X axis: temporal vs categorical.
+        # Recognize ClickHouse temporal types (DateTime/Date) too, not just TIMESTAMP.
         col_type = schema.columns.get(spec.time_column or "", "")
-        is_timestamp = "TIMESTAMP" in col_type.upper() if col_type else False
+        is_timestamp = (
+            any(t in col_type.upper() for t in ("TIMESTAMP", "DATETIME", "DATE", "TIME"))
+            if col_type else False
+        )
 
         if spec.time_column and is_timestamp:
             config["x"] = {
@@ -288,8 +292,9 @@ class ChartAgent:
             elif spec.dimension and spec.dimension != spec.time_column:
                 config["group_by"] = [{"name": spec.dimension}]
         else:
-            # Categorical X axis
-            x_col = spec.dimension or schema.table_name
+            # Categorical X axis. Never fall back to the table name — use the
+            # dimension, else the time column as a last resort.
+            x_col = spec.dimension or spec.time_column or ""
             col_dtype = schema.columns.get(x_col, "VARCHAR")
             config["x"] = {
                 "name": x_col,
@@ -496,8 +501,9 @@ class ChartAgent:
 
     @staticmethod
     def _big_number_config(spec: ChartSpec, schema: DatasetSchema) -> dict:
+        # This MCP only accepts "big_number" (not "big_number_total").
         return {
-            "chart_type": spec.chart_type.lower(),  # big_number or big_number_total
+            "chart_type": "big_number",
             "metric": {
                 "name": spec.metric_column,
                 "aggregate": spec.aggregate.upper(),
