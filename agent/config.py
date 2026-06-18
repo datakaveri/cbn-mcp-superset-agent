@@ -25,6 +25,15 @@ SUPERSET_PASSWORD = os.getenv("SUPERSET_PASSWORD", "admin")
 # it when Superset is SSO-only (no db-provider admin login). Default true.
 SUPERSET_LOGIN_ENABLED = os.getenv("SUPERSET_LOGIN_ENABLED", "true").lower() not in ("0", "false", "no")
 
+# ── Superset embedding (inline dashboard preview via guest token) ─────
+# The agent UI embeds the created dashboard with @superset-ui/embedded-sdk,
+# fetching a guest token from the same middleware ui-cbn uses.
+SUPERSET_EMBED_ENABLED = os.getenv("SUPERSET_EMBED_ENABLED", "true").lower() not in ("0", "false", "no")
+# Public Superset origin for the embedded SDK (defaults to SUPERSET_BASE_URL).
+SUPERSET_DOMAIN = os.getenv("SUPERSET_DOMAIN", SUPERSET_BASE_URL)
+# Endpoint that mints a Superset guest token (same as ui-cbn). Same-origin → relative is fine.
+SUPERSET_GUEST_TOKEN_URL = os.getenv("SUPERSET_GUEST_TOKEN_URL", "/middleware/middleware/guest_token")
+
 # ── Web UI ────────────────────────────────────────────────────────────
 # Sub-path the web UI is served under behind a reverse proxy, e.g. "/chatbot".
 # Leave empty when served at the domain root. Used to inject <base> so the

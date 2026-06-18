@@ -59,17 +59,23 @@ class DashboardAgent:
  
         dashboard_id = int(dashboard_id)
  
-        # Verify the dashboard exists
+        # Verify the dashboard exists and capture its uuid (needed for the
+        # embedded-SDK guest-token preview in the agent UI).
+        dashboard_uuid = ""
         verify_result = self.mcp.get_dashboard_info(dashboard_id)
         if not verify_result.success:
             log.warning("Dashboard verification failed: %s", verify_result.error)
         else:
-            log.info("Dashboard verified (id=%d)", dashboard_id)
+            vd = verify_result.data
+            vres = vd.get("result", vd) if isinstance(vd, dict) else {}
+            dashboard_uuid = (vres.get("uuid") or "") if isinstance(vres, dict) else ""
+            log.info("Dashboard verified (id=%d, uuid=%s)", dashboard_id, dashboard_uuid or "?")
  
         url = f"{SUPERSET_BASE_URL}/superset/dashboard/{dashboard_id}/"
  
         return AgentResult.ok({
             "dashboard_id": dashboard_id,
+            "uuid": dashboard_uuid,
             "url": url,
             "chart_count": len(chart_ids),
             "chart_ids": chart_ids,

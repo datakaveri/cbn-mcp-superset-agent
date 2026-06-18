@@ -97,6 +97,7 @@ class PipelineReport:
     """Final output of the pipeline — shown to the user."""
     dashboard_url: Optional[str] = None
     dashboard_id: Optional[int] = None
+    dashboard_uuid: Optional[str] = None   # for embedded-SDK preview (guest token)
     charts_created: list[ChartResult] = field(default_factory=list)
     sql_previews: dict[str, list] = field(default_factory=dict)  # {chart_name: rows}
     errors: list[str] = field(default_factory=list)

@@ -37,6 +37,7 @@ from config import (
     MAX_PLAN_RETRIES, APP_BASE_PATH, SUPERSET_LOGIN_ENABLED,
     KEYCLOAK_ENABLED, KEYCLOAK_URL, KEYCLOAK_REALM,
     KEYCLOAK_CLIENT_ID, KEYCLOAK_REQUIRED_ROLE,
+    SUPERSET_EMBED_ENABLED, SUPERSET_DOMAIN, SUPERSET_GUEST_TOKEN_URL,
 )
 
 log = logging.getLogger(__name__)
@@ -352,6 +353,11 @@ def run_web_server(port: int = 5001, host: str = "0.0.0.0"):
             "realm": KEYCLOAK_REALM,
             "clientId": KEYCLOAK_CLIENT_ID,
             "requiredRole": KEYCLOAK_REQUIRED_ROLE or None,
+            "embed": {
+                "enabled": SUPERSET_EMBED_ENABLED,
+                "supersetDomain": SUPERSET_DOMAIN,
+                "guestTokenUrl": SUPERSET_GUEST_TOKEN_URL,
+            },
         }
 
     # ── PWA assets ───────────────────────────────────────────────────
@@ -413,6 +419,7 @@ def run_web_server(port: int = 5001, host: str = "0.0.0.0"):
                     "success": report.success,
                     "dashboard_url": report.dashboard_url,
                     "dashboard_id": report.dashboard_id,
+                    "dashboard_uuid": report.dashboard_uuid,
                     "charts": charts_ok,
                     "charts_total": len(report.charts_created),
                     "errors": report.errors,

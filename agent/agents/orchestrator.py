@@ -180,6 +180,7 @@ Please fix the plan to use only valid column names and correct any issues."""
         if dashboard_result.success and isinstance(dashboard_result.data, dict):
             report.dashboard_url = dashboard_result.data.get("url")
             report.dashboard_id = dashboard_result.data.get("dashboard_id")
+            report.dashboard_uuid = dashboard_result.data.get("uuid")
             report.success = True
 
         for cr in chart_results:

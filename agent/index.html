@@ -614,7 +614,8 @@
     }
     .dash-head a:hover, .dash-head button:hover { border-color: var(--purple); color: var(--text); }
     .dash-hint { padding: 6px 16px; font-size: 11px; color: var(--text-dim); background: var(--surface2); }
-    #dash-frame { flex: 1; width: 100%; border: 0; background: #fff; }
+    #dash-mount { flex: 1; width: 100%; overflow: hidden; background: #fff; }
+    #dash-mount iframe { width: 100%; height: 100%; border: 0; }
   </style>
 </head>
 <body>
@@ -741,8 +742,8 @@
         <a id="dash-open" href="#" target="_blank">Open in Superset ↗</a>
         <button onclick="closePreview()">✕ Back to logs</button>
       </div>
-      <div class="dash-hint">If the preview is blank, you may need to be signed in to Superset — use “Open in Superset ↗”.</div>
-      <iframe id="dash-frame" title="Dashboard preview" referrerpolicy="origin-when-cross-origin"></iframe>
+      <div class="dash-hint" id="dash-hint">Loading embedded dashboard…</div>
+      <div id="dash-mount"></div>
     </div>
   </div>
 
@@ -890,7 +891,7 @@
   }
 
   // ── Show result ───────────────────────────────────────────────
-  function showResult(success, url, meta) {
+  function showResult(success, url, meta, uuid) {
     const bar = document.getElementById('result-bar');
     const label = document.getElementById('result-label');
     const urlEl = document.getElementById('result-url');
@@ -907,8 +908,8 @@
       urlEl.href = url;
       openBtn.href = url;
       openBtn.style.display = '';
-      // Embed the dashboard inline (standalone) instead of opening a new tab
-      showDashboardPreview(url);
+      // Embed the dashboard inline (guest-token SDK), iframe fallback otherwise
+      showDashboardPreview(url, uuid);
     } else {
       urlEl.textContent = '';
       openBtn.style.display = 'none';
@@ -919,23 +920,72 @@
 
   // ── Inline dashboard preview ──────────────────────────────────
   function standaloneUrl(url) {
-    // standalone=1 hides Superset's nav/chrome; keep it embeddable inline
     return url + (url.includes('?') ? '&' : '?') + 'standalone=1';
   }
 
-  function showDashboardPreview(url) {
+  // Fetch a Superset guest token (scoped to the dashboard) from the middleware.
+  async function fetchGuestToken(dashUuid) {
+    const cfg = (window.__cfg && window.__cfg.embed) || {};
+    const token = window.__kc ? await getAuthToken() : null;
+    const resp = await fetch(cfg.guestTokenUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': 'Bearer ' + token } : {}),
+      },
+      body: JSON.stringify({ access_token: token, dashboard_id: dashUuid }),
+    });
+    if (!resp.ok) throw new Error('guest token request failed (' + resp.status + ')');
+    const data = await resp.json().catch(() => null);
+    if (typeof data === 'string') return data.trim().replace(/^["']|["']$/g, '');
+    return (data && (data.token || data.guest_token)) || '';
+  }
+
+  async function showDashboardPreview(url, uuid) {
     const wrap = document.getElementById('dash-preview');
-    const frame = document.getElementById('dash-frame');
+    const mount = document.getElementById('dash-mount');
+    const hint = document.getElementById('dash-hint');
     document.getElementById('dash-open').href = url;
     document.getElementById('log-container').style.display = 'none';
-    frame.src = standaloneUrl(url);
+    mount.innerHTML = '';
     wrap.classList.add('visible');
+
+    const cfg = (window.__cfg && window.__cfg.embed) || {};
+    const embedFn = window.__embedDashboard;
+
+    // Preferred: guest-token embed (works regardless of per-user Superset access)
+    if (cfg.enabled && uuid && embedFn && cfg.supersetDomain && cfg.guestTokenUrl) {
+      hint.textContent = 'Loading embedded dashboard…';
+      try {
+        await embedFn({
+          id: uuid,
+          supersetDomain: cfg.supersetDomain,
+          mountPoint: mount,
+          fetchGuestToken: () => fetchGuestToken(uuid),
+          dashboardUiConfig: { hideTitle: true, filters: { visible: false, expanded: false } },
+        });
+        hint.style.display = 'none';
+        return;
+      } catch (e) {
+        console.warn('Embedded SDK failed, falling back to iframe:', e);
+        hint.style.display = '';
+        hint.textContent = 'Embedded view unavailable — trying direct view. If blank, use “Open in Superset ↗”.';
+        mount.innerHTML = '';
+      }
+    }
+
+    // Fallback: standalone iframe (needs the user to have Superset access)
+    const f = document.createElement('iframe');
+    f.title = 'Dashboard preview';
+    f.src = standaloneUrl(url);
+    mount.appendChild(f);
   }
 
   function closePreview() {
     const wrap = document.getElementById('dash-preview');
-    document.getElementById('dash-frame').src = 'about:blank';
-    wrap.classList.remove('visible');
+    const mount = document.getElementById('dash-mount');
+    if (mount) mount.innerHTML = '';
+    if (wrap) wrap.classList.remove('visible');
     document.getElementById('log-container').style.display = '';
   }
 
@@ -1019,7 +1069,7 @@
   }
 
   function handleEvent(event, phaseRunning) {
-    const { phase, level, message, dashboard_url, done, success, chart_count, charts } = event;
+    const { phase, level, message, dashboard_url, dashboard_uuid, done, success, chart_count, charts } = event;
 
     if (phase) {
       const phaseKey = phase.toLowerCase();
@@ -1045,7 +1095,7 @@
     if (done) {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       const meta = charts ? `${charts} chart(s) · ${elapsed}s` : `${elapsed}s`;
-      showResult(success, dashboard_url, meta);
+      showResult(success, dashboard_url, meta, dashboard_uuid);
     }
   }
 
@@ -1062,7 +1112,7 @@
     }
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    showResult(success, url, `${chartsDone}/${total} charts · ${elapsed}s`);
+    showResult(success, url, `${chartsDone}/${total} charts · ${elapsed}s`, report.dashboard_uuid);
   }
 
   function finishRun() {
@@ -1185,6 +1235,8 @@
       cfg = { enabled: false };
     }
 
+    window.__cfg = cfg;   // expose embed config (cfg.embed) to the preview code
+
     if (!cfg || !cfg.enabled) {
       window.__kc = null;                 // auth disabled → open access
       revealApp();
@@ -1222,6 +1274,17 @@
     setInterval(() => kc.updateToken(60).catch(() => {}), 30000);
   }
   boot();
+
+  // ── Superset Embedded SDK (for the inline dashboard preview) ──
+  // Loaded once; showDashboardPreview() uses window.__embedDashboard if present.
+  (async () => {
+    try {
+      const m = await import('https://cdn.jsdelivr.net/npm/@superset-ui/embedded-sdk@0.1.2/+esm');
+      window.__embedDashboard = m.embedDashboard || (m.default && m.default.embedDashboard);
+    } catch (e) {
+      console.warn('Embedded SDK failed to load; preview will use iframe fallback:', e);
+    }
+  })();
 
   // ── Service worker (PWA) ──────────────────────────────────────
   if ('serviceWorker' in navigator) {
