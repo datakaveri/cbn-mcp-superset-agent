@@ -894,9 +894,6 @@
   }
 
   // ── Inline dashboard preview ──────────────────────────────────
-  function standaloneUrl(url) {
-    return url + (url.includes('?') ? '&' : '?') + 'standalone=1';
-  }
 
   // Fetch a Superset guest token (scoped to the dashboard) from the agent's own
   // backend, which mints it via Superset. Carries the Keycloak token for @require_auth.
@@ -941,18 +938,18 @@
         hint.style.display = 'none';
         return;
       } catch (e) {
-        console.warn('Embedded SDK failed, falling back to iframe:', e);
-        hint.style.display = '';
-        hint.textContent = 'Loading dashboard…';
-        mount.innerHTML = '';
+        console.warn('Embedded dashboard failed to load:', e);
       }
     }
 
-    // Fallback: standalone iframe (needs the user to have Superset access)
-    const f = document.createElement('iframe');
-    f.title = 'Dashboard preview';
-    f.src = standaloneUrl(url);
-    mount.appendChild(f);
+    // No standalone-iframe fallback: loading the Superset dashboard page directly
+    // requires an interactive Superset login, which pushes the user into Superset's
+    // OAuth flow (and currently breaks as a mixed-content http:// redirect). Keep
+    // everything inside this app — show a clear message instead.
+    hint.style.display = '';
+    hint.textContent = 'Dashboard preview couldn’t load — please retry the query. '
+      + 'If it keeps failing, the dashboard wasn’t registered for embedding (check Superset embed config).';
+    mount.innerHTML = '';
   }
 
   function closePreview() {
