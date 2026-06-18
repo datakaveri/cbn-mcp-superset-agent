@@ -203,26 +203,8 @@ class Pipeline:
                            f"  '{chart_name}': {preview.get('error', 'unknown error')}")
 
         # ── Keep only working charts ──
-        # A chart whose SQL probe failed will render broken (or empty) in the
-        # dashboard. Drop those so the inline embedded dashboard shows ONLY charts
-        # that actually work. Guard against false negatives: if nothing validated,
-        # keep the full set and let chart creation's self-correction try anyway.
-        valid_names = {
-            c.name for c in plan.charts
-            if (sql_previews.get(c.name) or {}).get("valid")
-        }
-        if valid_names and len(valid_names) < len(plan.charts):
-            for c in plan.charts:
-                if c.name not in valid_names:
-                    err = (sql_previews.get(c.name) or {}).get("error") or "failed validation"
-                    self._emit(Phase.SQL_VALIDATION, "warning",
-                               f"  Dropping '{c.name}' — won't render ({err})")
-            plan.charts = [c for c in plan.charts if c.name in valid_names]
-            self._emit(Phase.SQL_VALIDATION, "success",
-                       f"Keeping {len(plan.charts)} working chart(s)")
-        elif not valid_names:
-            self._emit(Phase.SQL_VALIDATION, "warning",
-                       "No charts passed validation — attempting all (self-correction may fix them)")
+        # Two independent reasons a chart won't render in the dashboard:
+        plan.charts = self._keep_working_charts(plan.charts, schema, sql_previews)
 
         # ── Phase 4: Chart Creation ──
         self._emit(Phase.CHART_CREATION, "info", f"Creating {len(plan.charts)} charts...")
@@ -311,6 +293,57 @@ class Pipeline:
             self._emit(Phase.PLAN_REFINEMENT, "warning",
                        f"Refinement failed, using original plan: {refined.error}")
             return plan
+
+    # Numeric aggregates the Superset MCP rejects on a ClickHouse Nullable()
+    # column (it treats Nullable(Float64) as "non-numeric"). COUNT / COUNT_DISTINCT
+    # are fine on any type. Verified against the live MCP: there is NO config-level
+    # workaround (sql_expression errors in the xy builder; a dtype hint is ignored),
+    # so such a chart always fails at creation — drop it up front.
+    _NUMERIC_AGGS = {"SUM", "AVG", "MIN", "MAX", "STDDEV", "VAR", "MEDIAN", "PERCENTILE"}
+
+    def _keep_working_charts(self, charts, schema, sql_previews):
+        """
+        Filter a chart list down to the ones that will actually render:
+          1. Hard rule: a numeric aggregate on a Nullable column is rejected by
+             Superset's validator with no workaround — drop unconditionally.
+          2. Probe rule: a chart whose SQL probe failed won't render — drop it,
+             BUT if that would remove everything, keep the set (a probe can
+             false-negative on an empty time window; let self-correction try).
+        Emits a warning per dropped chart and a summary line.
+        """
+        # (1) numeric aggregate on a Nullable column → always fails at creation
+        keep = []
+        for c in charts:
+            agg = (getattr(c, "aggregate", "") or "").upper()
+            col = getattr(c, "metric_column", "") or ""
+            col_type = (schema.columns.get(col, "") or "").lower()
+            if agg in self._NUMERIC_AGGS and "nullable" in col_type:
+                self._emit(
+                    Phase.SQL_VALIDATION, "warning",
+                    f"  Dropping '{c.name}' — {agg} of nullable column '{col}' is "
+                    f"rejected by Superset (needs a non-nullable column, or COUNT)",
+                )
+            else:
+                keep.append(c)
+        charts = keep
+
+        # (2) probe-failed charts → drop, unless that would empty the dashboard
+        valid_names = {c.name for c in charts if (sql_previews.get(c.name) or {}).get("valid")}
+        if valid_names and len(valid_names) < len(charts):
+            for c in charts:
+                if c.name not in valid_names:
+                    err = (sql_previews.get(c.name) or {}).get("error") or "failed validation"
+                    self._emit(Phase.SQL_VALIDATION, "warning",
+                               f"  Dropping '{c.name}' — won't render ({err})")
+            charts = [c for c in charts if c.name in valid_names]
+
+        if charts:
+            self._emit(Phase.SQL_VALIDATION, "success",
+                       f"Keeping {len(charts)} working chart(s)")
+        else:
+            self._emit(Phase.SQL_VALIDATION, "warning",
+                       "No charts can render for this query — see warnings above")
+        return charts
 
     def close(self):
         """Clean up resources."""
