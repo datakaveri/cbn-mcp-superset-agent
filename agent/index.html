@@ -597,6 +597,24 @@
     }
     #logout-btn.visible { display: inline-block; }
     #logout-btn:hover { border-color: var(--red); color: var(--red); }
+
+    /* ── Inline dashboard preview ── */
+    #dash-preview { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+    #dash-preview.visible { display: flex; }
+    .dash-head {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border);
+    }
+    .dash-head .title { font-size: 12px; font-weight: 600; color: var(--text); }
+    .dash-head .spacer { margin-left: auto; }
+    .dash-head a, .dash-head button {
+      font-size: 11px; padding: 5px 10px; border-radius: 6px;
+      border: 1px solid var(--border2); background: var(--surface2);
+      color: var(--text-mid); text-decoration: none; cursor: pointer;
+    }
+    .dash-head a:hover, .dash-head button:hover { border-color: var(--purple); color: var(--text); }
+    .dash-hint { padding: 6px 16px; font-size: 11px; color: var(--text-dim); background: var(--surface2); }
+    #dash-frame { flex: 1; width: 100%; border: 0; background: #fff; }
   </style>
 </head>
 <body>
@@ -714,6 +732,18 @@
       <a class="open-btn" id="open-btn" href="#" target="_blank">Open dashboard ↗</a>
       <div class="result-meta" id="result-meta"></div>
     </div>
+
+    <!-- Inline dashboard preview (embedded standalone, same-origin) -->
+    <div id="dash-preview">
+      <div class="dash-head">
+        <span class="title">📊 Dashboard preview</span>
+        <span class="spacer"></span>
+        <a id="dash-open" href="#" target="_blank">Open in Superset ↗</a>
+        <button onclick="closePreview()">✕ Back to logs</button>
+      </div>
+      <div class="dash-hint">If the preview is blank, you may need to be signed in to Superset — use “Open in Superset ↗”.</div>
+      <iframe id="dash-frame" title="Dashboard preview" referrerpolicy="origin-when-cross-origin"></iframe>
+    </div>
   </div>
 
 </main>
@@ -768,6 +798,7 @@
 
   function clearAll() {
     if (running) return;
+    closePreview();
     document.getElementById('log-container').innerHTML =
       '<div class="empty-state" id="empty-state"><div class="empty-icon">◈</div><div class="empty-text">Run a query to see pipeline output</div></div>';
     document.getElementById('log-count').textContent = '0 entries';
@@ -876,14 +907,36 @@
       urlEl.href = url;
       openBtn.href = url;
       openBtn.style.display = '';
-      // Auto-open
-      setTimeout(() => window.open(url, '_blank'), 600);
+      // Embed the dashboard inline (standalone) instead of opening a new tab
+      showDashboardPreview(url);
     } else {
       urlEl.textContent = '';
       openBtn.style.display = 'none';
     }
 
     metaEl.textContent = meta || '';
+  }
+
+  // ── Inline dashboard preview ──────────────────────────────────
+  function standaloneUrl(url) {
+    // standalone=1 hides Superset's nav/chrome; keep it embeddable inline
+    return url + (url.includes('?') ? '&' : '?') + 'standalone=1';
+  }
+
+  function showDashboardPreview(url) {
+    const wrap = document.getElementById('dash-preview');
+    const frame = document.getElementById('dash-frame');
+    document.getElementById('dash-open').href = url;
+    document.getElementById('log-container').style.display = 'none';
+    frame.src = standaloneUrl(url);
+    wrap.classList.add('visible');
+  }
+
+  function closePreview() {
+    const wrap = document.getElementById('dash-preview');
+    document.getElementById('dash-frame').src = 'about:blank';
+    wrap.classList.remove('visible');
+    document.getElementById('log-container').style.display = '';
   }
 
   // ── Run pipeline ──────────────────────────────────────────────
@@ -896,6 +949,7 @@
     document.getElementById('run-btn').innerHTML = '<span class="spinner"></span> Running…';
 
     // Reset state
+    closePreview();   // clearAll no-ops while running, so reset the preview here
     clearAll();
     startTimer();
     logCount = 0;
