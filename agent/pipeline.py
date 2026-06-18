@@ -38,6 +38,7 @@ from config import (
     KEYCLOAK_ENABLED, KEYCLOAK_URL, KEYCLOAK_REALM,
     KEYCLOAK_CLIENT_ID, KEYCLOAK_REQUIRED_ROLE,
     SUPERSET_EMBED_ENABLED, SUPERSET_DOMAIN, SUPERSET_GUEST_TOKEN_URL,
+    SUPERSET_EMBED_REGISTER, SUPERSET_EMBED_ALLOWED_DOMAINS,
 )
 
 log = logging.getLogger(__name__)
@@ -222,6 +223,18 @@ class Pipeline:
         if dash_result.success:
             url = dash_result.data.get("url", "")
             self._emit(Phase.DASHBOARD_ASSEMBLY, "success", f"Dashboard live → {url}")
+            # Register the dashboard for embedding so the inline guest-token preview
+            # (/embedded/<uuid>) resolves. Uses the returned embed uuid for the SDK.
+            if SUPERSET_EMBED_REGISTER:
+                embed_uuid = self.auth.register_embedding(
+                    dash_result.data.get("dashboard_id"), SUPERSET_EMBED_ALLOWED_DOMAINS,
+                )
+                if embed_uuid:
+                    dash_result.data["uuid"] = embed_uuid
+                    self._emit(Phase.DASHBOARD_ASSEMBLY, "info", "Registered dashboard for inline embedding")
+                else:
+                    self._emit(Phase.DASHBOARD_ASSEMBLY, "warning",
+                               "Embed registration failed — inline preview may not load (check Superset creds)")
         else:
             self._emit(Phase.DASHBOARD_ASSEMBLY, "error", f"Dashboard failed: {dash_result.error}")
 

@@ -6,7 +6,10 @@ Gets a Bearer token for REST API fallback calls.
 import logging
 import requests
 
-from config import SUPERSET_API_URL, SUPERSET_USERNAME, SUPERSET_PASSWORD, REQUEST_TIMEOUT
+from config import (
+    SUPERSET_API_URL, SUPERSET_BASE_URL,
+    SUPERSET_USERNAME, SUPERSET_PASSWORD, REQUEST_TIMEOUT,
+)
 from models import AgentResult
 
 log = logging.getLogger(__name__)
@@ -57,6 +60,44 @@ class SupersetAuth:
             return AgentResult.ok(self._token)
         except requests.RequestException as e:
             return AgentResult.fail(f"Superset login failed: {e}")
+
+    def register_embedding(self, dashboard_id, allowed_domains=None):
+        """
+        Register a dashboard for embedding (POST /dashboard/{id}/embedded) so the
+        guest-token preview's /embedded/<uuid> page resolves. Returns the embedded
+        uuid, or None on failure (non-fatal). Logs in on demand.
+        """
+        if not self._token and not self.login().success:
+            log.warning("Embed registration skipped — Superset login failed (check SUPERSET_USERNAME/PASSWORD)")
+            return None
+
+        try:
+            csrf_resp = self._http.get(
+                f"{SUPERSET_API_URL}/security/csrf_token/",
+                headers={"Authorization": f"Bearer {self._token}"},
+                timeout=REQUEST_TIMEOUT,
+            )
+            csrf_resp.raise_for_status()
+            csrf = csrf_resp.json().get("result")
+
+            resp = self._http.post(
+                f"{SUPERSET_API_URL}/dashboard/{dashboard_id}/embedded",
+                json={"allowed_domains": allowed_domains or []},
+                headers={
+                    "Authorization": f"Bearer {self._token}",
+                    "X-CSRFToken": csrf or "",
+                    "Content-Type": "application/json",
+                    "Referer": SUPERSET_BASE_URL,
+                },
+                timeout=REQUEST_TIMEOUT,
+            )
+            resp.raise_for_status()
+            uuid = (resp.json().get("result") or {}).get("uuid")
+            log.info("Registered dashboard %s for embedding (embed uuid=%s)", dashboard_id, uuid)
+            return uuid
+        except requests.RequestException as e:
+            log.warning("Embed registration failed for dashboard %s: %s", dashboard_id, e)
+            return None
 
     def close(self):
         self._http.close()
