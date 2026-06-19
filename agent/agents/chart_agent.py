@@ -418,26 +418,22 @@ class ChartAgent:
 
     # ── Pivot Table / Heatmap ─────────────────────────────────────────
     #
-    # MCP's generate_chart does NOT accept chart_type "heatmap" — the only
-    # valid MCP tags are: xy, table, pie, pivot_table, mixed_timeseries.
+    # MCP's generate_chart does NOT accept chart_type "heatmap" — the valid tags
+    # are: xy, table, pie, pivot_table, mixed_timeseries. We render a "heatmap" as
+    # a pivot_table (rows × columns matrix of the metric).
     #
-    # We use chart_type "pivot_table" and enable Superset's built-in
-    # conditional-formatting / color-scale options so the pivot renders
-    # as a visual heatmap (cell color ∝ metric value).
-    #
-    # Config shape accepted by Superset MCP pivot_table:
-    #   rows     – list of {name} dicts for the ROW axis  (e.g. bank_name)
-    #   columns  – list of {name} dicts for the COL axis  (e.g. channel_type)
-    #   metrics  – list of metric dicts for the cell value
-    #   conditional_formatting – list of rules that color cells by value range
+    # IMPORTANT: the MCP pivot_table config accepts ONLY rows / columns / metrics /
+    # row_limit / show_*_totals / *_format / transpose. It does NOT accept
+    # color_scheme or conditional_formatting — sending those fails the chart with a
+    # generic "An error occurred" (verified live). So we keep the config minimal.
 
     @staticmethod
     def _pivot_table_config(spec: ChartSpec, schema: DatasetSchema) -> dict:
         """
-        Builds a pivot_table config that Superset renders as a heatmap.
-        - rows    = spec.dimension        (e.g. bank_name)
-        - columns = spec.series_column    (e.g. channel_type); falls back to 'channel_type'
-        - cells colored by metric value via conditional_formatting
+        Builds a pivot_table config (used for heatmap requests too).
+        - rows    = spec.dimension     (e.g. bank_name)
+        - columns = spec.series_column (e.g. channel_type); falls back to 'channel_type'
+        - metrics = the cell value
         """
         row_col = spec.dimension or "bank_name"
         col_col = spec.series_column or "channel_type"
@@ -453,16 +449,8 @@ class ChartAgent:
                     "label": spec.metric,
                 }
             ],
-            # Color cells like a heatmap: low value = white/light, high = dark blue
-            "color_scheme": "blue_white_yellow",
-            "conditional_formatting": [
-                {
-                    "operator": "between",
-                    "targetValue": 0,
-                    "column": spec.metric,
-                    "colorScheme": "RdYlGn",
-                }
-            ],
+            "show_row_totals": True,
+            "show_column_totals": True,
         }
 
         if spec.row_limit and isinstance(spec.row_limit, int) and spec.row_limit > 0:
