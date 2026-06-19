@@ -254,17 +254,30 @@ class ChartAgent:
 
         is_stacked = spec.stack or ct_lower in ("stacked_bar", "stacked_area")
 
-        # Primary metric
-        y_metric = {
+        # Primary metric + any extra_metrics (multi-metric charts, e.g. inflow +
+        # outflow rendered as two series on one xy chart).
+        y_metrics = [{
             "name": spec.metric_column,
             "aggregate": spec.aggregate.upper(),
             "label": spec.metric,
-        }
+        }]
+        for m in (spec.extra_metrics or []):
+            if not isinstance(m, dict):
+                continue
+            col = m.get("metric_column") or m.get("name") or m.get("column")
+            if not col:
+                continue
+            m_agg = (m.get("aggregate") or spec.aggregate).upper()
+            y_metrics.append({
+                "name": col,
+                "aggregate": m_agg,
+                "label": m.get("label") or f"{m_agg} {col}",
+            })
 
         config: dict = {
             "chart_type": "xy",
             "kind": kind,
-            "y": [y_metric],
+            "y": y_metrics,
         }
 
         if is_stacked:

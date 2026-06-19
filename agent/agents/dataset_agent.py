@@ -195,7 +195,9 @@ class DatasetAgent:
 
         # Virtual datasets have no physical table — capture their defining SQL so
         # probes can wrap it as "FROM (<sql>) AS virtual_table" (what Superset does).
-        schema.sql = (result.get("sql") or "").strip()
+        # Strip a trailing ';' — it's valid standalone but breaks the subquery wrap
+        # ("FROM (...;) AS virtual_table" → parse error).
+        schema.sql = (result.get("sql") or "").strip().rstrip(";").strip()
  
         # Warn if timestamp is stored as VARCHAR — temporal charts need CAST
         ts_type = columns.get("timestamp", "")

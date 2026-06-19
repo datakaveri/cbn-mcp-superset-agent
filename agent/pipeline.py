@@ -312,15 +312,21 @@ class Pipeline:
         Emits a warning per dropped chart and a summary line.
         """
         # (1) numeric aggregate on a Nullable column → always fails at creation
+        def _nullable(col) -> bool:
+            return "nullable" in (schema.columns.get(str(col), "") or "").lower()
+
         keep = []
         for c in charts:
             agg = (getattr(c, "aggregate", "") or "").upper()
-            col = getattr(c, "metric_column", "") or ""
-            col_type = (schema.columns.get(col, "") or "").lower()
-            if agg in self._NUMERIC_AGGS and "nullable" in col_type:
+            # metric_column is normally a str; be defensive if a list slipped
+            # through (multi-metric plans) so we never crash on an unhashable key.
+            raw_col = getattr(c, "metric_column", "") or ""
+            cols = raw_col if isinstance(raw_col, list) else [raw_col]
+            bad = next((str(col) for col in cols if _nullable(col)), None)
+            if agg in self._NUMERIC_AGGS and bad:
                 self._emit(
                     Phase.SQL_VALIDATION, "warning",
-                    f"  Dropping '{c.name}' — {agg} of nullable column '{col}' is "
+                    f"  Dropping '{c.name}' — {agg} of nullable column '{bad}' is "
                     f"rejected by Superset (needs a non-nullable column, or COUNT)",
                 )
             else:

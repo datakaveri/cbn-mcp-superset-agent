@@ -203,18 +203,35 @@ Please fix the plan to use only valid column names and correct any issues."""
         try:
             charts = []
             for c in data.get("charts", []):
+                # The LLM sometimes returns several metric columns as a list
+                # (e.g. inflow + outflow). ChartSpec.metric_column must be a single
+                # string, so normalize: first column stays primary, the rest become
+                # extra_metrics (same aggregate). This also avoids list keys leaking
+                # into SQL (SUM([...])) or schema lookups downstream.
+                agg = c.get("aggregate", "COUNT")
+                mcol = c.get("metric_column", "*")
+                extra = list(c.get("extra_metrics") or [])
+                if isinstance(mcol, list):
+                    cols = [str(x) for x in mcol if x]
+                    mcol = cols[0] if cols else "*"
+                    for ec in cols[1:]:
+                        extra.append({"metric_column": ec, "aggregate": agg,
+                                      "label": f"{agg.title()} {ec}"})
+                dim = c.get("dimension", "")
+                if isinstance(dim, list):
+                    dim = str(dim[0]) if dim else ""
                 charts.append(ChartSpec(
                     name=c.get("name", "Untitled Chart"),
                     chart_type=c.get("chart_type", "bar"),
                     metric=c.get("metric", "COUNT(*)"),
-                    metric_column=c.get("metric_column", "*"),
-                    aggregate=c.get("aggregate", "COUNT"),
-                    dimension=c.get("dimension", ""),
+                    metric_column=mcol,
+                    aggregate=agg,
+                    dimension=dim,
                     time_column=c.get("time_column"),
                     filters=c.get("filters"),
                     stack=bool(c.get("stack", False)),
                     row_limit=c.get("row_limit"),
-                    extra_metrics=c.get("extra_metrics"),
+                    extra_metrics=extra or None,
                     series_column=c.get("series_column"),
                 ))
 
