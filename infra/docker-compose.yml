@@ -10,6 +10,10 @@ services:
     build:
       context: ..
       dockerfile: infra/Dockerfile
+      args:
+        # Must match APP_BASE_PATH in .env (the sub-path the UI is served under).
+        # Use "/" for a root deploy.
+        VITE_BASE: /chatbot/
     image: cbn-mcp-superset-agent:latest
     container_name: cbn-mcp-agent-ui
     ports:

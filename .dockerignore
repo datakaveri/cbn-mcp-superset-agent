@@ -1,6 +1,11 @@
 # Keep the build context lean and free of secrets
 .git/
 .venv/
+.venv-local/
+# Node deps/build are produced inside the Dockerfile build stage — never copy the
+# host copies in (the host node_modules is the wrong arch for the x86 image).
+**/node_modules/
+frontend/dist/
 **/__pycache__/
 **/*.pyc
 **/*.log
