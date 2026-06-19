@@ -75,6 +75,11 @@ LLM_API_KEY = os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY", "")
 # (some newer models only accept the default); set e.g. LLM_TEMPERATURE=0 to pin it.
 _llm_temp = os.getenv("LLM_TEMPERATURE")
 LLM_TEMPERATURE = float(_llm_temp) if _llm_temp not in (None, "") else None
+# Max output tokens. Reasoning models (gpt-5.x) count internal reasoning toward
+# this budget, so keep it generous — too low truncates the JSON plan mid-response
+# (finish_reason=length → "Could not parse JSON"). Sent as max_completion_tokens.
+# Set to 0 to omit the cap entirely.
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "16000"))
 
 # ── Pipeline Tuning ───────────────────────────────────────────────────
 MAX_CHART_RETRIES = int(os.getenv("MAX_CHART_RETRIES", "3"))

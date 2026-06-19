@@ -18,6 +18,7 @@ from config import (
     LLM_TIMEOUT,
     LLM_API_KEY,
     LLM_TEMPERATURE,
+    LLM_MAX_TOKENS,
 )
 
 log = logging.getLogger(__name__)
@@ -34,10 +35,11 @@ class LLMClient:
         self.temperature = LLM_TEMPERATURE
         self._http = requests.Session()
 
-    def generate(self, system_prompt: str, user_prompt: str) -> str:
+    def generate(self, system_prompt: str, user_prompt: str, json_mode: bool = False) -> str:
         """
         Call the LLM and return the raw text response.
-        Raises LLMError on failure.
+        Raises LLMError on failure. When json_mode is set, asks the API for a
+        guaranteed JSON object (response_format) — callers must instruct JSON.
         """
         if not self.api_key:
             raise LLMError(
@@ -55,6 +57,12 @@ class LLMClient:
         # reject any non-default value.
         if self.temperature is not None:
             payload["temperature"] = self.temperature
+        # Cap output tokens. Reasoning models (gpt-5.x) use max_completion_tokens;
+        # a generous value prevents the JSON plan from being truncated mid-response.
+        if LLM_MAX_TOKENS > 0:
+            payload["max_completion_tokens"] = LLM_MAX_TOKENS
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -85,9 +93,18 @@ class LLMClient:
         # OpenAI chat-completions: {"choices": [{"message": {"content": "..."}}]}
         if "choices" in data:
             try:
-                return data["choices"][0]["message"]["content"]
+                choice = data["choices"][0]
+                content = choice["message"]["content"]
             except (KeyError, IndexError, TypeError) as e:
                 raise LLMError(f"Malformed chat-completions response: {data}") from e
+            # finish_reason="length" means the cap was hit and the output (often the
+            # JSON plan) is truncated — surface it instead of returning broken JSON.
+            if choice.get("finish_reason") == "length":
+                raise LLMError(
+                    "LLM response truncated (hit the output-token limit). "
+                    "Increase LLM_MAX_TOKENS."
+                )
+            return content
         # Ollama-style fallback: {"response": "..."}
         if "response" in data:
             return data["response"]
@@ -101,9 +118,9 @@ class LLMClient:
     def generate_json(self, system_prompt: str, user_prompt: str) -> Any:
         """
         Call the LLM and parse the response as JSON.
-        Strips markdown fences and whitespace before parsing.
+        Uses JSON mode (response_format) and strips any markdown fences.
         """
-        raw = self.generate(system_prompt, user_prompt)
+        raw = self.generate(system_prompt, user_prompt, json_mode=True)
         return self._extract_json(raw)
 
     @staticmethod

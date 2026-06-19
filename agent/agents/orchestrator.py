@@ -53,6 +53,10 @@ RESPONSE FORMAT:
 
 IMPORTANT:
 - metric_column must be a raw column name from the chosen dataset (or "*" for COUNT(*))
+- Multiple measures / comparisons: when the request combines or compares measures
+  (e.g. "inflow and outflow", "X vs Y", "deposits and withdrawals"), set
+  "metric_column" to a LIST of the relevant columns (e.g. ["total_in","total_out"])
+  and "metric" to a matching list — the chart then renders one series per measure.
 - aggregate must be the SQL function name (e.g. "SUM", "COUNT", "AVG", "MIN", "MAX")
 - time_column should be a real temporal/timestamp column, set only for time-series charts (line, area)
 - dimension is the primary GROUP BY column (shown on X axis or as slices)
@@ -78,6 +82,11 @@ The previous plan had issues. You are given:
 
 Produce a corrected JSON plan using ONLY columns that exist in the schema.
 Respond ONLY with valid JSON, same format as before. No markdown fences.
+
+If the user's request involves multiple measures or a comparison (e.g. "inflow
+and outflow", "X vs Y", "deposits and withdrawals"), include ALL of them: set
+"metric_column" to a LIST of the matching columns (one series each) — map each
+measure to the closest column (e.g. inflow → total_in, outflow → total_out).
 
 CRITICAL filter rules:
 - op must be one of: =, !=, >, <, >=, <=, LIKE, ILIKE, NOT LIKE, IN, NOT IN
@@ -203,27 +212,34 @@ Please fix the plan to use only valid column names and correct any issues."""
         try:
             charts = []
             for c in data.get("charts", []):
-                # The LLM sometimes returns several metric columns as a list
-                # (e.g. inflow + outflow). ChartSpec.metric_column must be a single
-                # string, so normalize: first column stays primary, the rest become
-                # extra_metrics (same aggregate). This also avoids list keys leaking
-                # into SQL (SUM([...])) or schema lookups downstream.
+                # The LLM may return metric_column AND metric as parallel LISTS for
+                # multi-measure charts (e.g. inflow + outflow). ChartSpec wants a
+                # single primary metric, so normalize: first → primary, the rest →
+                # extra_metrics. This stops list values leaking downstream into SQL
+                # (SUM([...])), schema lookups, OR chart labels (a list label makes
+                # the MCP reject the chart with a generic "An error occurred").
                 agg = c.get("aggregate", "COUNT")
                 mcol = c.get("metric_column", "*")
+                mval = c.get("metric", "COUNT(*)")
+                labels = [str(x) for x in mval] if isinstance(mval, list) else []
                 extra = list(c.get("extra_metrics") or [])
                 if isinstance(mcol, list):
                     cols = [str(x) for x in mcol if x]
                     mcol = cols[0] if cols else "*"
-                    for ec in cols[1:]:
-                        extra.append({"metric_column": ec, "aggregate": agg,
-                                      "label": f"{agg.title()} {ec}"})
+                    for i, ec in enumerate(cols[1:], start=1):
+                        extra.append({
+                            "metric_column": ec, "aggregate": agg,
+                            "label": labels[i] if i < len(labels) else f"{agg.title()} {ec}",
+                        })
+                # The primary metric label must be a single string, never a list.
+                metric = labels[0] if labels else (mval if isinstance(mval, str) else "COUNT(*)")
                 dim = c.get("dimension", "")
                 if isinstance(dim, list):
                     dim = str(dim[0]) if dim else ""
                 charts.append(ChartSpec(
                     name=c.get("name", "Untitled Chart"),
                     chart_type=c.get("chart_type", "bar"),
-                    metric=c.get("metric", "COUNT(*)"),
+                    metric=metric,
                     metric_column=mcol,
                     aggregate=agg,
                     dimension=dim,
