@@ -21,10 +21,16 @@ class SupersetAuth:
     def __init__(self):
         self._token: str | None = None
         self._http = requests.Session()
+        self._last_error: str | None = None
 
     @property
     def token(self) -> str | None:
         return self._token
+
+    @property
+    def last_error(self) -> str | None:
+        """Reason the most recent _api_post failed (for surfacing to callers)."""
+        return self._last_error
 
     @property
     def headers(self) -> dict:
@@ -75,11 +81,15 @@ class SupersetAuth:
         """
         Authenticated POST to a Superset API path, with one re-login retry on 401
         (the access token expires on a long-running server). Returns the Response
-        or None on failure.
+        or None on failure; on failure self.last_error holds the reason.
         """
+        self._last_error = None
         for attempt in (1, 2):
-            if not self._token and not self.login().success:
-                return None
+            if not self._token:
+                login = self.login()
+                if not login.success:
+                    self._last_error = login.error
+                    return None
             try:
                 resp = self._http.post(
                     f"{SUPERSET_API_URL}{path}",
@@ -95,11 +105,15 @@ class SupersetAuth:
                 if resp.status_code == 401 and attempt == 1:
                     self._token = None   # expired — re-login and retry once
                     continue
-                resp.raise_for_status()
+                if not resp.ok:
+                    self._last_error = f"Superset {path} → HTTP {resp.status_code}: {resp.text[:300]}".strip()
+                    log.warning("%s", self._last_error)
+                    return None
                 return resp
             except requests.RequestException as e:
+                self._last_error = f"Superset {path} request error: {e}"
                 if attempt == 2:
-                    log.warning("Superset POST %s failed: %s", path, e)
+                    log.warning("%s", self._last_error)
                     return None
         return None
 

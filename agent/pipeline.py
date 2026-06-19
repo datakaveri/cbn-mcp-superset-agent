@@ -442,7 +442,9 @@ def run_web_server(port: int = 5001, host: str = "0.0.0.0"):
             return {"error": "uuid required"}, 400
         token = _embed_auth.mint_guest_token(uuid)
         if not token:
-            return {"error": "could not mint guest token"}, 502
+            reason = _embed_auth.last_error or "unknown error"
+            log.warning("Guest-token mint failed for uuid=%s: %s", uuid, reason)
+            return {"error": "could not mint guest token", "reason": reason}, 502
         return {"token": token}
 
     # ── PWA assets ───────────────────────────────────────────────────

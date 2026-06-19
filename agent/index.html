@@ -907,7 +907,11 @@
       },
       body: JSON.stringify({ uuid: dashUuid }),
     });
-    if (!resp.ok) throw new Error('guest token request failed (' + resp.status + ')');
+    if (!resp.ok) {
+      let reason = '';
+      try { const j = await resp.json(); reason = j.reason || j.error || ''; } catch {}
+      throw new Error('guest token request failed (' + resp.status + ')' + (reason ? ': ' + reason : ''));
+    }
     const data = await resp.json().catch(() => null);
     if (typeof data === 'string') return data.trim().replace(/^["']|["']$/g, '');
     return (data && (data.token || data.guest_token)) || '';
