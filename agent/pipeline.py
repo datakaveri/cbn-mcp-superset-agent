@@ -204,49 +204,33 @@ class Pipeline:
                    f"Using '{schema.name}' (id={schema.id}, db_id={schema.database_id}, "
                    f"{len(schema.columns)} columns)")
 
-        # ── Phase 1b: refine only if the plan used invalid columns ──
-        self._emit(Phase.PLAN_REFINEMENT, "info", "Validating plan columns...")
-        plan = self._refine_plan_if_needed(user_query, plan, schema, profile_text)
+        # ── Phases 1b→4 on the chosen dataset (refine → validate → keep → create) ──
+        plan, sql_previews, chart_results = self._validate_keep_create(
+            user_query, plan, schema, profile_text)
 
-        # ── Phase 3: SQL Validation ──
-        self._emit(Phase.SQL_VALIDATION, "info", "Running SQL probe queries...")
-        sql_result = self.sql_agent.validate_charts(plan.charts, schema)
-        sql_previews = sql_result.data or {}
-
-        if not sql_result.success:
-            self._emit(Phase.SQL_VALIDATION, "warning", "Some probes failed — attempting correction...")
-            plan_retry = self.orchestrator.refine_plan(user_query, plan, schema, sql_previews, profile_text)
-            if plan_retry.success:
-                plan = plan_retry.data
-                self._emit(Phase.SQL_VALIDATION, "info", "Re-validating corrected plan...")
-                sql_result = self.sql_agent.validate_charts(plan.charts, schema)
-                sql_previews = sql_result.data or {}
-
-        for chart_name, preview in sql_previews.items():
-            if isinstance(preview, dict) and preview.get("valid"):
-                rows = preview.get("preview", [])
-                count = len(rows) if isinstance(rows, list) else 0
-                self._emit(Phase.SQL_VALIDATION, "success", f"  '{chart_name}': {count} preview rows")
-            elif isinstance(preview, dict):
-                self._emit(Phase.SQL_VALIDATION, "warning",
-                           f"  '{chart_name}': {preview.get('error', 'unknown error')}")
-
-        # ── Keep only working charts ──
-        # Two independent reasons a chart won't render in the dashboard:
-        plan.charts = self._keep_working_charts(plan.charts, schema, sql_previews)
-
-        # ── Phase 4: Chart Creation ──
-        self._emit(Phase.CHART_CREATION, "info", f"Creating {len(plan.charts)} charts...")
-        chart_result = self.chart_agent.create_charts(plan.charts, schema)
-        chart_results = chart_result.data or []
-
-        for cr in chart_results:
-            if cr.success:
-                self._emit(Phase.CHART_CREATION, "success",
-                           f"  '{cr.spec.name}' → chart_id={cr.chart_id}")
-            else:
-                self._emit(Phase.CHART_CREATION, "error",
-                           f"  '{cr.spec.name}' failed: {cr.error}")
+        # ── Dataset fallback (creation-aware) ──
+        # If the chosen dataset produced NO rendered chart (bad column types, a
+        # broken virtual-dataset SQL, or a create-time error), re-run end-to-end on
+        # the other shortlisted candidates — a sibling dataset often works cleanly.
+        if not any(c.success for c in chart_results) and len(candidates) > 1:
+            for alt in candidates:
+                if alt.table_name == schema.table_name:
+                    continue
+                self._emit(Phase.PLAN_GENERATION, "warning",
+                           f"No chart rendered on '{schema.table_name}' — trying '{alt.table_name}'…")
+                alt_res = self.orchestrator.generate_plan(user_query, [alt], profiles)
+                if not alt_res.success:
+                    continue
+                alt_prof = profiles.get(alt.table_name)
+                alt_text = alt_prof.render() if alt_prof else ""
+                a_plan, a_prev, a_results = self._validate_keep_create(
+                    user_query, alt_res.data, alt, alt_text)
+                if any(c.success for c in a_results):
+                    plan, schema, sql_previews, chart_results, profile_text = \
+                        a_plan, alt, a_prev, a_results, alt_text
+                    self._emit(Phase.DATASET_DISCOVERY, "success",
+                               f"Recovered on dataset '{alt.table_name}'")
+                    break
 
         # ── Phase 5: Dashboard Assembly (new dashboard, or append to current) ──
         is_followup = intent == "followup" and bool(context and context.get("dashboard_id"))
@@ -309,6 +293,48 @@ class Pipeline:
 
     # ── Internal helpers ─────────────────────────────────────────────
 
+    def _validate_keep_create(self, user_query, plan, schema, profile_text):
+        """
+        Refine → SQL-validate (with one correction pass) → keep only working charts
+        → create them, for a single dataset. Returns (plan, sql_previews,
+        chart_results). Used for the primary dataset and each fallback candidate.
+        """
+        self._emit(Phase.PLAN_REFINEMENT, "info", "Validating plan columns...")
+        plan = self._refine_plan_if_needed(user_query, plan, schema, profile_text)
+
+        self._emit(Phase.SQL_VALIDATION, "info", "Running SQL probe queries...")
+        sql_result = self.sql_agent.validate_charts(plan.charts, schema)
+        sql_previews = sql_result.data or {}
+        if not sql_result.success:
+            self._emit(Phase.SQL_VALIDATION, "warning", "Some probes failed — attempting correction...")
+            retry = self.orchestrator.refine_plan(user_query, plan, schema, sql_previews, profile_text)
+            if retry.success:
+                plan = retry.data
+                self._emit(Phase.SQL_VALIDATION, "info", "Re-validating corrected plan...")
+                sql_previews = self.sql_agent.validate_charts(plan.charts, schema).data or {}
+
+        for chart_name, preview in sql_previews.items():
+            if isinstance(preview, dict) and preview.get("valid"):
+                rows = preview.get("preview", [])
+                count = len(rows) if isinstance(rows, list) else 0
+                self._emit(Phase.SQL_VALIDATION, "success", f"  '{chart_name}': {count} preview rows")
+            elif isinstance(preview, dict):
+                self._emit(Phase.SQL_VALIDATION, "warning",
+                           f"  '{chart_name}': {preview.get('error', 'unknown error')}")
+
+        plan.charts = self._keep_working_charts(plan.charts, schema, sql_previews)
+        if not plan.charts:
+            return plan, sql_previews, []
+
+        self._emit(Phase.CHART_CREATION, "info", f"Creating {len(plan.charts)} charts...")
+        chart_results = self.chart_agent.create_charts(plan.charts, schema).data or []
+        for cr in chart_results:
+            if cr.success:
+                self._emit(Phase.CHART_CREATION, "success", f"  '{cr.spec.name}' → chart_id={cr.chart_id}")
+            else:
+                self._emit(Phase.CHART_CREATION, "error", f"  '{cr.spec.name}' failed: {cr.error}")
+        return plan, sql_previews, chart_results
+
     def _refine_plan_if_needed(
         self, user_query: str, plan: PipelinePlan, schema: DatasetSchema,
         profile_text: str = "",
@@ -346,61 +372,74 @@ class Pipeline:
                        f"Refinement failed, using original plan: {refined.error}")
             return plan
 
-    # Numeric aggregates the Superset MCP rejects on a ClickHouse Nullable()
-    # column (it treats Nullable(Float64) as "non-numeric"). COUNT / COUNT_DISTINCT
-    # are fine on any type. Verified against the live MCP: there is NO config-level
-    # workaround (sql_expression errors in the xy builder; a dtype hint is ignored),
-    # so such a chart always fails at creation — drop it up front.
+    # Numeric aggregates the Superset MCP rejects on "non-numeric" columns — which
+    # it considers to include ClickHouse Nullable(...) AND Bool AND text types.
+    # COUNT / COUNT_DISTINCT are fine on any type. Verified live: there is NO
+    # config-level workaround (sql_expression errors in the xy builder; a dtype hint
+    # is ignored), so such a chart always fails at creation — drop it up front.
     _NUMERIC_AGGS = {"SUM", "AVG", "MIN", "MAX", "STDDEV", "VAR", "MEDIAN", "PERCENTILE"}
+    _NUMERIC_TYPES = ("INT", "FLOAT", "DOUBLE", "DECIMAL", "NUMERIC", "REAL")
+
+    @classmethod
+    def _mcp_can_aggregate(cls, ctype: str) -> bool:
+        """True if the MCP will accept SUM/AVG/MIN/MAX on this column type. It
+        rejects Nullable(...), Bool, and text types as 'non-numeric'."""
+        t = (ctype or "").upper()
+        if "NULLABLE" in t or "BOOL" in t:
+            return False
+        return any(h in t for h in cls._NUMERIC_TYPES)
 
     def _keep_working_charts(self, charts, schema, sql_previews):
         """
         Filter a chart list down to the ones that will actually render:
-          1. Hard rule: a numeric aggregate on a Nullable column is rejected by
-             Superset's validator with no workaround — drop unconditionally.
-          2. Probe rule: a chart whose SQL probe failed won't render — drop it,
-             BUT if that would remove everything, keep the set (a probe can
-             false-negative on an empty time window; let self-correction try).
+          1. Hard rule: a numeric aggregate (SUM/AVG/…) on a column the MCP treats
+             as non-numeric (Nullable / Bool / text) — drop unconditionally.
+          2. Probe rule: a chart whose probe hit a real DB error will fail at
+             creation too → drop it (even if that empties the set; the dataset
+             fallback handles recovery). A "0 rows" probe is a possible
+             false-negative (empty window) → keep only if nothing else is valid.
         Emits a warning per dropped chart and a summary line.
         """
-        # (1) numeric aggregate on a Nullable column → always fails at creation
-        def _nullable(col) -> bool:
-            return "nullable" in (schema.columns.get(str(col), "") or "").lower()
-
+        # (1) numeric aggregate on a non-aggregatable column → always fails
         keep = []
         for c in charts:
             agg = (getattr(c, "aggregate", "") or "").upper()
-            # metric_column is normally a str; be defensive if a list slipped
-            # through (multi-metric plans) so we never crash on an unhashable key.
+            # metric_column is normally a str; be list-safe (multi-metric plans).
             raw_col = getattr(c, "metric_column", "") or ""
             cols = raw_col if isinstance(raw_col, list) else [raw_col]
-            bad = next((str(col) for col in cols if _nullable(col)), None)
-            if agg in self._NUMERIC_AGGS and bad:
+            bad = next((str(col) for col in cols
+                        if agg in self._NUMERIC_AGGS
+                        and not self._mcp_can_aggregate(schema.columns.get(str(col), ""))), None)
+            if bad:
                 self._emit(
                     Phase.SQL_VALIDATION, "warning",
-                    f"  Dropping '{c.name}' — {agg} of nullable column '{bad}' is "
-                    f"rejected by Superset (needs a non-nullable column, or COUNT)",
+                    f"  Dropping '{c.name}' — {agg} of non-numeric column '{bad}' "
+                    f"(type {schema.columns.get(bad, '?')}) is rejected by Superset",
                 )
             else:
                 keep.append(c)
         charts = keep
 
-        # (2) probe-failed charts → drop, unless that would empty the dashboard
-        valid_names = {c.name for c in charts if (sql_previews.get(c.name) or {}).get("valid")}
-        if valid_names and len(valid_names) < len(charts):
-            for c in charts:
-                if c.name not in valid_names:
-                    err = (sql_previews.get(c.name) or {}).get("error") or "failed validation"
-                    self._emit(Phase.SQL_VALIDATION, "warning",
-                               f"  Dropping '{c.name}' — won't render ({err})")
-            charts = [c for c in charts if c.name in valid_names]
+        # (2) probe results: separate valid / hard-fail (real error) / soft-fail (0 rows)
+        valid = [c for c in charts if (sql_previews.get(c.name) or {}).get("valid")]
+        soft = []
+        for c in charts:
+            if c in valid:
+                continue
+            err = (sql_previews.get(c.name) or {}).get("error") or "failed validation"
+            if "0 rows" in err.lower():
+                soft.append(c)
+            else:
+                self._emit(Phase.SQL_VALIDATION, "warning",
+                           f"  Dropping '{c.name}' — query failed, won't render ({err[:140]})")
+        charts = valid + (soft if not valid else [])  # keep 0-row charts only if nothing else
 
         if charts:
             self._emit(Phase.SQL_VALIDATION, "success",
                        f"Keeping {len(charts)} working chart(s)")
         else:
             self._emit(Phase.SQL_VALIDATION, "warning",
-                       "No charts can render for this query — see warnings above")
+                       "No charts can render on this dataset — see warnings above")
         return charts
 
     def close(self):

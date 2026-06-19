@@ -58,7 +58,10 @@ IMPORTANT:
   * metric_column = a numeric column (role=measure); time_column = a column with role=time
   * map words in the request to columns via sample values (e.g. "deposits" →
     filter type='CUSTOMER_DEPOSIT'; "inflow"→deposit, "outflow"→withdrawal)
-  * NEVER SUM/AVG a column marked NULLABLE — use COUNT, or pick a non-nullable column
+  * NEVER apply SUM/AVG/MIN/MAX to a NULLABLE, BOOL, or text column — Superset
+    rejects it. For a rate over a boolean/flag (e.g. "approval rate"), do NOT
+    AVG the flag; instead COUNT with a filter (e.g. metric=COUNT(*), filter
+    approved=true) or pick a numeric column / COUNT
   * pick chart_type from the data shape: time→line/area, few categories→bar/pie,
     many categories→table with row_limit (top-N), two dimensions→heatmap
 - metric_column must be a raw column name from the chosen dataset (or "*" for COUNT(*))
@@ -106,9 +109,9 @@ CRITICAL filter rules:
 """
 
 SHORTLIST_SYSTEM_PROMPT = """You pick the datasets most relevant to a user's analytics
-request. Given dataset table names and the request, return the 1-3 table names most
-likely to contain the answer (fewer is better). Respond ONLY with JSON:
-{"datasets": ["table_name", ...]}"""
+request. Given dataset table names and the request, return the 3 most relevant table
+names, best first (always return at least 2 when plausible, so a fallback exists if
+the top choice doesn't work). Respond ONLY with JSON: {"datasets": ["table_name", ...]}"""
 
 INTENT_SYSTEM_PROMPT = """Classify whether a user's request should CREATE a new dashboard
 or ADD to / modify the dashboard they're currently viewing.

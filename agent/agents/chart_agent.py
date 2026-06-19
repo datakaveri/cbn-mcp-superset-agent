@@ -188,6 +188,12 @@ class ChartAgent:
 
     def _build_chart_params(self, spec: ChartSpec, schema: DatasetSchema) -> dict:
         """Build the full dict passed to mcp.generate_chart()."""
+        # COUNT(*): the MCP rejects metric name='*' ("An error occurred"). Count a
+        # real column instead — the grouped dimension/time column is always present,
+        # so COUNT(<that>) matches COUNT(*) row counts.
+        if (spec.aggregate or "").upper() == "COUNT" and (not spec.metric_column or spec.metric_column == "*"):
+            spec.metric_column = spec.dimension or spec.time_column or next(iter(schema.columns), "")
+
         config = self._build_config(spec, schema)
 
         # Inject filters into config (position depends on family)
