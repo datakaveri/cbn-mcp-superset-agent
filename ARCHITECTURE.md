@@ -71,6 +71,10 @@ Each `POST /run` builds a fresh `Pipeline` and streams these phases:
    MCP limitation — see Constraints).
 9. **Create** (`agents/chart_agent.py`) — build each chart config and call
    `generate_chart` (self-corrects on MCP errors; supports multi-metric series).
+    Steps 5–9 run per dataset via `Pipeline._validate_keep_create`. **Dataset
+    fallback**: if the chosen dataset produces *no rendered chart* (bad column
+    types, broken virtual-dataset SQL, or a create-time error), the pipeline
+    retries end-to-end on the next shortlisted candidate until one works.
 10. **Assemble** — *new*: `generate_dashboard` + `register_embedding`; *follow-up*:
     `add_chart_to_existing_dashboard` for each new chart on the active dashboard
     (reusing its embed uuid so the inline preview refreshes in place).
@@ -116,9 +120,15 @@ the API on `:5001`. Behind an HTTPS reverse proxy that routes the `/chatbot/`
 subtree to the container.
 
 ## Known constraints
-- **Nullable aggregates**: the MCP rejects SUM/AVG/MIN/MAX on ClickHouse
-  `Nullable(...)` columns with no config workaround — such charts are dropped, and
-  the planner is told to avoid them.
+- **Non-numeric aggregates**: the MCP rejects SUM/AVG/MIN/MAX on ClickHouse
+  `Nullable(...)`, `Bool`, and text columns ("non-numeric") with no config
+  workaround — such charts are dropped, the planner is told to avoid them, and the
+  dataset fallback recovers when possible.
+- **`COUNT(*)`**: the MCP rejects metric name `'*'` — count a real column instead
+  (handled in `chart_agent`).
 - **`delete_dashboard`** errors in the MCP — use Superset's REST `DELETE` instead.
+- Some pre-existing **virtual datasets have broken SQL** (alias-in-GROUP-BY →
+  `NOT_AN_AGGREGATE`); the probe catches these and the agent falls back to a
+  sibling dataset.
 - LLM model is OpenAI `gpt-5.5` (a reasoning model); JSON-mode + a generous
   `max_completion_tokens` prevent truncated plans.
