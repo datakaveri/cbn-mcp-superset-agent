@@ -7,3 +7,6 @@ export const BASE: string = import.meta.env.BASE_URL || '/';
 export function apiUrl(path: string): string {
   return BASE.replace(/\/?$/, '/') + path.replace(/^\//, '');
 }
+
+/** CBN crest logo (served from /public, base-path aware). */
+export const LOGO_URL: string = BASE.replace(/\/?$/, '/') + 'logo.png';

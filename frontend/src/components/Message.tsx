@@ -1,3 +1,4 @@
+import { LOGO_URL } from '../config';
 import { PHASES } from '../types';
 import type { AssistantMessage, ChatMessage, LogLevel } from '../types';
 import { DashboardEmbed } from './DashboardEmbed';
@@ -60,7 +61,9 @@ function AssistantBubble({ m }: { m: AssistantMessage }) {
 
   return (
     <div className="msg assistant">
-      <div className="avatar" aria-hidden>◈</div>
+      <div className="avatar" aria-hidden>
+        <img src={LOGO_URL} alt="" />
+      </div>
       <div className="bubble">
         <div className={`status-line ${m.running ? 'running' : m.success ? 'ok' : 'warn'}`}>
           {m.running && <span className="spinner" />}

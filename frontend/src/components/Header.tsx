@@ -1,4 +1,5 @@
 import { logout } from '../auth/keycloak';
+import { LOGO_URL } from '../config';
 import { useAppConfig } from '../context';
 
 export function Header() {
@@ -6,7 +7,7 @@ export function Header() {
   return (
     <header className="app-header">
       <div className="brand">
-        <span className="brand-mark" aria-hidden>◈</span>
+        <img className="brand-logo" src={LOGO_URL} alt="CBN" />
         <div className="brand-text">
           <span className="brand-title">CBN Analytics</span>
           <span className="brand-sub">Ask. Visualize. Decide.</span>

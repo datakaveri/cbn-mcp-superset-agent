@@ -1,24 +1,33 @@
 :root {
-  --bg: #0c0e13;
-  --surface: #14171f;
-  --surface2: #1b1f2a;
-  --border: #262b38;
-  --text: #e7eaf0;
-  --text-mid: #aab2c2;
-  --text-dim: #6b7384;
-  --purple: #a78bfa;
-  --purple-dim: rgba(167, 139, 250, 0.18);
-  --green: #4ade80;
-  --green-dim: rgba(74, 222, 128, 0.16);
-  --red: #f87171;
-  --red-dim: rgba(248, 113, 113, 0.16);
-  --amber: #fbbf24;
-  --blue: #60a5fa;
+  /* Brand — aligned to the CBN crest (green primary, gold + blue accents) */
+  --green: #15873d;
+  --green-strong: #0f6c30;
+  --green-soft: #e7f4ec;
+  --green-ring: rgba(21, 135, 61, 0.35);
+  --gold: #b9820a;
+  --gold-soft: #faf1d7;
+  --blue: #2f7dc4;
+  --red: #c0392b;
+  --red-soft: #fbeae8;
+  --amber: #b7791f;
+
+  /* Light surfaces */
+  --bg: #f4f7f4;
+  --surface: #ffffff;
+  --surface-2: #eef2ee;
+  --border: #dde6df;
+  --border-strong: #c8d4cb;
+
+  /* Text */
+  --text: #15241b;
+  --text-mid: #4c5b52;
+  --text-dim: #7e8c83;
 
   --font: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --shadow: 0 1px 2px rgba(16, 40, 24, 0.04), 0 4px 16px rgba(16, 40, 24, 0.06);
 
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 * {
@@ -65,8 +74,8 @@ button {
 .spinner {
   width: 14px;
   height: 14px;
-  border: 2px solid var(--purple-dim);
-  border-top-color: var(--purple);
+  border: 2px solid var(--green-ring);
+  border-top-color: var(--green);
   border-radius: 50%;
   display: inline-block;
   animation: spin 0.7s linear infinite;
@@ -94,24 +103,20 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 20px;
+  padding: 10px 20px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 11px;
 }
-.brand-mark {
+.brand-logo {
   width: 34px;
   height: 34px;
-  display: grid;
-  place-items: center;
-  border-radius: 9px;
-  background: var(--purple-dim);
-  color: var(--purple);
-  font-size: 18px;
+  object-fit: contain;
+  display: block;
 }
 .brand-text {
   display: flex;
@@ -119,7 +124,9 @@ button {
   line-height: 1.2;
 }
 .brand-title {
-  font-weight: 650;
+  font-weight: 700;
+  color: var(--green-strong);
+  letter-spacing: -0.01em;
 }
 .brand-sub {
   font-size: 11px;
@@ -140,15 +147,15 @@ button {
 }
 .logout-btn {
   background: transparent;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   color: var(--text-mid);
   padding: 6px 12px;
   border-radius: 7px;
   font-size: 12px;
 }
 .logout-btn:hover {
-  border-color: var(--purple);
-  color: var(--text);
+  border-color: var(--green);
+  color: var(--green-strong);
 }
 
 /* ── Chat area ──────────────────────────────────────────────────── */
@@ -176,16 +183,18 @@ button {
 .welcome {
   max-width: 640px;
   margin: 0 auto;
-  padding: 14vh 20px 0;
+  padding: 12vh 20px 0;
   text-align: center;
 }
-.welcome-mark {
-  font-size: 40px;
-  color: var(--purple);
+.welcome-logo {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
 }
 .welcome h1 {
   font-size: 26px;
-  margin: 14px 0 8px;
+  margin: 16px 0 8px;
+  letter-spacing: -0.02em;
 }
 .welcome p {
   color: var(--text-mid);
@@ -207,23 +216,28 @@ button {
   justify-content: flex-end;
 }
 .msg.user .bubble {
-  background: var(--purple-dim);
-  border: 1px solid rgba(167, 139, 250, 0.3);
-  color: var(--text);
+  background: var(--green);
+  color: #fff;
   padding: 10px 14px;
   border-radius: 14px 14px 4px 14px;
   max-width: 80%;
+  box-shadow: var(--shadow);
 }
 .msg.assistant .avatar {
   flex: 0 0 auto;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   display: grid;
   place-items: center;
-  border-radius: 8px;
-  background: var(--surface2);
-  color: var(--purple);
-  font-size: 15px;
+  border-radius: 9px;
+  background: var(--green-soft);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.msg.assistant .avatar img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
 }
 .msg.assistant .bubble {
   flex: 1;
@@ -232,16 +246,17 @@ button {
   border: 1px solid var(--border);
   border-radius: 4px 14px 14px 14px;
   padding: 12px 14px;
+  box-shadow: var(--shadow);
 }
 
 .status-line {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-weight: 550;
+  font-weight: 600;
 }
 .status-line.ok {
-  color: var(--green);
+  color: var(--green-strong);
 }
 .status-line.warn {
   color: var(--amber);
@@ -267,22 +282,22 @@ button {
   border-radius: 999px;
   border: 1px solid var(--border);
   color: var(--text-dim);
-  background: var(--surface2);
+  background: var(--surface-2);
 }
 .phase-chip.running {
-  border-color: var(--purple);
-  color: var(--purple);
-  background: var(--purple-dim);
+  border-color: var(--gold);
+  color: var(--gold);
+  background: var(--gold-soft);
 }
 .phase-chip.done {
-  border-color: var(--green-dim);
-  color: var(--green);
-  background: var(--green-dim);
+  border-color: transparent;
+  color: var(--green-strong);
+  background: var(--green-soft);
 }
 .phase-chip.error {
-  border-color: var(--red-dim);
+  border-color: transparent;
   color: var(--red);
-  background: var(--red-dim);
+  background: var(--red-soft);
 }
 
 /* ── Logs ───────────────────────────────────────────────────────── */
@@ -316,6 +331,9 @@ button {
 .log-line .log-ts {
   color: var(--text-dim);
 }
+.log-line .log-icon {
+  color: var(--text-dim);
+}
 .log-line.success .log-icon {
   color: var(--green);
 }
@@ -333,6 +351,7 @@ button {
   border-radius: 10px;
   overflow: hidden;
   background: #fff;
+  box-shadow: var(--shadow);
 }
 .embed-mount {
   width: 100%;
@@ -348,9 +367,9 @@ button {
 .embed-error {
   margin-top: 12px;
   padding: 12px 14px;
-  border: 1px solid var(--red-dim);
+  border: 1px solid var(--red);
   border-radius: 10px;
-  background: var(--red-dim);
+  background: var(--red-soft);
   color: var(--red);
   font-size: 13px;
 }
@@ -373,8 +392,8 @@ button {
   margin: 0 auto 10px;
 }
 .ex-chip {
-  background: var(--surface2);
-  border: 1px solid var(--border);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
   color: var(--text-mid);
   padding: 8px 12px;
   border-radius: 8px;
@@ -382,8 +401,9 @@ button {
   text-align: left;
 }
 .ex-chip:hover {
-  border-color: var(--purple);
-  color: var(--text);
+  border-color: var(--green);
+  color: var(--green-strong);
+  background: var(--green-soft);
 }
 .ex-chip:disabled {
   opacity: 0.5;
@@ -399,8 +419,8 @@ button {
 .composer-input {
   flex: 1;
   resize: none;
-  background: var(--bg);
-  border: 1px solid var(--border);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
   color: var(--text);
   border-radius: 10px;
   padding: 12px 14px;
@@ -411,11 +431,12 @@ button {
 }
 .composer-input:focus {
   outline: none;
-  border-color: var(--purple);
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px var(--green-ring);
 }
 .send-btn {
-  background: var(--purple);
-  color: #14101f;
+  background: var(--green);
+  color: #fff;
   border: 0;
   border-radius: 10px;
   padding: 12px 20px;
@@ -424,6 +445,9 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+.send-btn:hover:not(:disabled) {
+  background: var(--green-strong);
 }
 .send-btn:disabled {
   opacity: 0.5;

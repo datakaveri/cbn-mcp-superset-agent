@@ -12,6 +12,7 @@ Usage:
 
 import json
 import logging
+import mimetypes
 import os
 import queue
 import sys
@@ -379,9 +380,13 @@ def run_web_server(port: int = 5001, host: str = "0.0.0.0"):
         print("Flask and flask-cors are required. Install with: pip install flask flask-cors")
         sys.exit(1)
 
-    # Locate index.html next to this file
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    app = Flask(__name__, static_folder=base_dir)
+    # The built React app (frontend/dist) lives one level up from agent/. When
+    # present it's the UI we serve; otherwise we fall back to the legacy
+    # single-file agent/index.html so the branch still runs un-built.
+    frontend_dist = os.path.join(os.path.dirname(base_dir), "frontend", "dist")
+    mimetypes.add_type("application/manifest+json", ".webmanifest")
+    app = Flask(__name__, static_folder=None)  # we serve static assets ourselves
     CORS(app)  # Allow cross-origin requests from any port (browser opening index.html elsewhere)
 
     # Sub-path support: when deployed behind a proxy under e.g. /chatbot, strip
@@ -404,9 +409,12 @@ def run_web_server(port: int = 5001, host: str = "0.0.0.0"):
 
     @app.route("/")
     def index():
-        # When served under a sub-path (e.g. /chatbot behind a proxy), inject a
-        # <base> tag so the browser resolves auth-config/run/assets under the
-        # prefix. APP_BASE_PATH wins; otherwise honor the proxy's X-Forwarded-Prefix.
+        # Prefer the built React app. Its asset/API URLs are already baked with the
+        # correct base (VITE_BASE=/chatbot/), so no <base> injection is needed.
+        dist_index = os.path.join(frontend_dist, "index.html")
+        if os.path.exists(dist_index):
+            return send_from_directory(frontend_dist, "index.html")
+        # Legacy fallback: single-file UI with <base> injection for the sub-path.
         prefix = APP_BASE_PATH or request.headers.get("X-Forwarded-Prefix", "").rstrip("/")
         with open(os.path.join(base_dir, "index.html"), encoding="utf-8") as f:
             html = f.read()
@@ -453,33 +461,27 @@ def run_web_server(port: int = 5001, host: str = "0.0.0.0"):
             return {"error": "could not mint guest token", "reason": reason}, 502
         return {"token": token}
 
-    # ── PWA assets ───────────────────────────────────────────────────
-    @app.route("/manifest.webmanifest")
-    def manifest():
-        return send_from_directory(base_dir, "manifest.webmanifest",
-                                   mimetype="application/manifest+json")
+    # ── Static assets (built frontend + PWA) ─────────────────────────
+    # Serve any file under frontend/dist — JS/CSS bundles, manifest.webmanifest,
+    # sw.js, icons, favicon. The exact API routes above take precedence over this
+    # catch-all, so /run, /guest-token, etc. are never shadowed. Falls back to the
+    # legacy agent/ assets when dist isn't built.
+    _legacy_assets = {
+        "manifest.webmanifest", "service-worker.js", "logo.png",
+        "favicon.ico", "icon-192.png", "icon-512.png",
+    }
 
-    @app.route("/service-worker.js")
-    def service_worker():
-        resp = send_from_directory(base_dir, "service-worker.js",
-                                   mimetype="application/javascript")
-        resp.headers["Service-Worker-Allowed"] = "/"
-        resp.headers["Cache-Control"] = "no-cache"
-        return resp
-
-    @app.route("/logo.png")
-    def logo():
-        return send_from_directory(base_dir, "logo.png", mimetype="image/png")
-
-    @app.route("/favicon.ico")
-    def favicon():
-        return send_from_directory(base_dir, "favicon.ico", mimetype="image/x-icon")
-
-    @app.route("/icon-<int:size>.png")
-    def icon_png(size: int):
-        if size not in (192, 512):
-            return {"error": "not found"}, 404
-        return send_from_directory(base_dir, f"icon-{size}.png", mimetype="image/png")
+    @app.route("/<path:filename>")
+    def static_files(filename):
+        if os.path.isfile(os.path.join(frontend_dist, filename)):
+            resp = send_from_directory(frontend_dist, filename)
+            if filename.endswith(("sw.js", "registerSW.js")):
+                resp.headers["Service-Worker-Allowed"] = "/"
+                resp.headers["Cache-Control"] = "no-cache"
+            return resp
+        if filename in _legacy_assets and os.path.isfile(os.path.join(base_dir, filename)):
+            return send_from_directory(base_dir, filename)
+        return {"error": "not found"}, 404
 
     @app.route("/run", methods=["POST"])
     @require_auth
