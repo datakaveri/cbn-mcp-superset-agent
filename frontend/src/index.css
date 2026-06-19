@@ -1,12 +1,11 @@
 :root {
-  /* Brand — aligned to the CBN crest (green primary, gold + blue accents) */
+  /* Brand — aligned to the CBN crest (green primary, gold accents) */
   --green: #15873d;
   --green-strong: #0f6c30;
   --green-soft: #e7f4ec;
   --green-ring: rgba(21, 135, 61, 0.35);
   --gold: #b9820a;
   --gold-soft: #faf1d7;
-  --blue: #2f7dc4;
   --red: #c0392b;
   --red-soft: #fbeae8;
   --amber: #b7791f;
