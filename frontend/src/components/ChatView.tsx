@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { fetchSuggestions } from '../api';
 import { LOGO_URL } from '../config';
 import { usePipeline } from '../hooks/usePipeline';
 import { EXAMPLE_QUERIES } from '../types';
@@ -8,6 +9,20 @@ import { Message } from './Message';
 export function ChatView() {
   const { messages, running, run } = usePipeline();
   const endRef = useRef<HTMLDivElement>(null);
+  const [starters, setStarters] = useState<string[]>(EXAMPLE_QUERIES);
+
+  // Dataset-grounded starter suggestions (fall back to the static defaults).
+  useEffect(() => {
+    let cancelled = false;
+    fetchSuggestions()
+      .then((s) => {
+        if (!cancelled && s.length) setStarters(s);
+      })
+      .catch(() => {/* keep defaults */});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -24,7 +39,7 @@ export function ChatView() {
             <h1>What would you like to see?</h1>
             <p>Describe a chart or dashboard in plain language — I’ll build it and show it inline.</p>
             <div className="welcome-examples">
-              {EXAMPLE_QUERIES.map((q) => (
+              {starters.map((q) => (
                 <button key={q} className="ex-chip" onClick={() => run(q)}>
                   {q}
                 </button>
@@ -33,14 +48,19 @@ export function ChatView() {
           </div>
         ) : (
           <div className="messages">
-            {messages.map((m) => (
-              <Message key={m.id} m={m} />
+            {messages.map((m, i) => (
+              <Message
+                key={m.id}
+                m={m}
+                isLast={i === messages.length - 1}
+                onSuggest={run}
+              />
             ))}
             <div ref={endRef} />
           </div>
         )}
       </div>
-      <Composer running={running} onSend={run} showExamples={!empty} />
+      <Composer running={running} onSend={run} />
     </div>
   );
 }

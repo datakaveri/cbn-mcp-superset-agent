@@ -9,7 +9,7 @@ const base = process.env.VITE_BASE || '/';
 // In dev, the React app runs on Vite's port and proxies the agent's API routes
 // to the Flask backend (default :5001). SSE (/run) streams through unbuffered.
 const backend = process.env.VITE_BACKEND || 'http://localhost:5001';
-const apiRoutes = ['/auth-config', '/run', '/guest-token', '/health'];
+const apiRoutes = ['/auth-config', '/suggestions', '/run', '/guest-token', '/health'];
 
 // Brand color = CBN crest green (keeps the PWA theme aligned with the logo).
 const THEME_COLOR = '#15873d';

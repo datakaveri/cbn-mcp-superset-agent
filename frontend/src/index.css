@@ -408,6 +408,20 @@ button {
   opacity: 0.5;
   cursor: default;
 }
+
+/* ── Follow-up suggestions (under a finished assistant message) ──── */
+.followups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+.followups-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-right: 2px;
+}
 .composer-row {
   max-width: 820px;
   margin: 0 auto;

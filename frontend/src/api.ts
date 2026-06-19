@@ -1,6 +1,6 @@
 import { apiUrl } from './config';
 import { getToken } from './auth/keycloak';
-import type { AuthConfig, PipelineEvent } from './types';
+import type { ActiveDashboard, AuthConfig, PipelineEvent } from './types';
 
 /** Thrown when the backend rejects the request for auth reasons (401/403). */
 export class AuthError extends Error {
@@ -15,6 +15,17 @@ export async function fetchAuthConfig(): Promise<AuthConfig> {
   const r = await fetch(apiUrl('auth-config'));
   if (!r.ok) throw new Error(`auth-config failed (${r.status})`);
   return r.json();
+}
+
+/** Dataset-grounded starter suggestions for the welcome screen. */
+export async function fetchSuggestions(): Promise<string[]> {
+  const token = await getToken();
+  const r = await fetch(apiUrl('suggestions'), {
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+  });
+  if (!r.ok) throw new Error(`suggestions failed (${r.status})`);
+  const data = await r.json().catch(() => null);
+  return Array.isArray(data?.suggestions) ? data.suggestions : [];
 }
 
 /** Mint a Superset guest token (scoped to the dashboard) via our backend. */
@@ -46,6 +57,7 @@ export async function fetchGuestToken(uuid: string): Promise<string> {
 /** Run the pipeline and stream parsed SSE events as they arrive. */
 export async function* runPipeline(
   query: string,
+  context?: ActiveDashboard | null,
   signal?: AbortSignal,
 ): AsyncGenerator<PipelineEvent> {
   const token = await getToken();
@@ -55,7 +67,7 @@ export async function* runPipeline(
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify(context ? { query, context } : { query }),
     signal,
   });
 

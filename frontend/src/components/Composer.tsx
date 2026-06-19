@@ -1,13 +1,11 @@
 import { useState } from 'react';
-import { EXAMPLE_QUERIES } from '../types';
 
 interface Props {
   running: boolean;
   onSend: (q: string) => void;
-  showExamples: boolean;
 }
 
-export function Composer({ running, onSend, showExamples }: Props) {
+export function Composer({ running, onSend }: Props) {
   const [value, setValue] = useState('');
 
   const submit = () => {
@@ -19,15 +17,6 @@ export function Composer({ running, onSend, showExamples }: Props) {
 
   return (
     <div className="composer">
-      {showExamples && (
-        <div className="examples">
-          {EXAMPLE_QUERIES.map((q) => (
-            <button key={q} className="ex-chip" onClick={() => onSend(q)} disabled={running}>
-              {q}
-            </button>
-          ))}
-        </div>
-      )}
       <div className="composer-row">
         <textarea
           className="composer-input"

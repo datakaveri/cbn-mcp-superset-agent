@@ -28,6 +28,17 @@ export interface PipelineEvent {
   charts?: number;
   charts_total?: number;
   errors?: string[];
+  dataset?: string;          // dataset the dashboard was built on
+  chart_names?: string[];    // names of charts on the dashboard
+  followups?: string[];      // suggested next questions
+}
+
+/** The dashboard currently in view — sent back as context for follow-up queries. */
+export interface ActiveDashboard {
+  dashboard_id: number;
+  dashboard_uuid?: string;
+  dataset?: string;
+  chart_names?: string[];
 }
 
 export interface LogLine {
@@ -56,6 +67,7 @@ export interface AssistantMessage {
   chartCount?: number;
   elapsed?: number;
   error?: string;
+  followups?: string[];   // suggested next questions for this dashboard
 }
 
 export type ChatMessage = UserMessage | AssistantMessage;

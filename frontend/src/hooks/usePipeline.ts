@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { AuthError, runPipeline } from '../api';
 import { relogin } from '../auth/keycloak';
-import type { AssistantMessage, ChatMessage } from '../types';
+import type { ActiveDashboard, AssistantMessage, ChatMessage } from '../types';
 
 let counter = 0;
 const newId = () => `m${++counter}`;
@@ -16,6 +16,9 @@ export function usePipeline() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [running, setRunning] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // The dashboard currently in view — sent as context so the next query can be a
+  // follow-up that adds to it (set after each successful run).
+  const activeRef = useRef<ActiveDashboard | null>(null);
 
   const patch = useCallback(
     (id: string, fn: (m: AssistantMessage) => AssistantMessage) => {
@@ -44,7 +47,7 @@ export function usePipeline() {
       const start = performance.now();
 
       try {
-        for await (const ev of runPipeline(q, ac.signal)) {
+        for await (const ev of runPipeline(q, activeRef.current, ac.signal)) {
           patch(aid, (m) => {
             const next: AssistantMessage = {
               ...m,
@@ -70,7 +73,17 @@ export function usePipeline() {
               next.dashboardUuid = ev.dashboard_uuid || undefined;
               next.dashboardUrl = ev.dashboard_url || undefined;
               next.chartCount = ev.charts;
+              next.followups = ev.followups || [];
               next.elapsed = Math.round((performance.now() - start) / 100) / 10;
+              // Remember this dashboard so the next query can extend it.
+              if (ev.success && ev.dashboard_id) {
+                activeRef.current = {
+                  dashboard_id: ev.dashboard_id,
+                  dashboard_uuid: ev.dashboard_uuid,
+                  dataset: ev.dataset,
+                  chart_names: ev.chart_names,
+                };
+              }
             }
             return next;
           });

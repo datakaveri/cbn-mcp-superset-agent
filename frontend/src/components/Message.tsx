@@ -43,7 +43,15 @@ function LogList({ logs }: { logs: AssistantMessage['logs'] }) {
   );
 }
 
-function AssistantBubble({ m }: { m: AssistantMessage }) {
+function AssistantBubble({
+  m,
+  isLast,
+  onSuggest,
+}: {
+  m: AssistantMessage;
+  isLast: boolean;
+  onSuggest: (q: string) => void;
+}) {
   let status: string;
   if (m.running) status = 'Working…';
   else if (m.error) status = '⚠ ' + m.error;
@@ -57,7 +65,10 @@ function AssistantBubble({ m }: { m: AssistantMessage }) {
     .filter(Boolean)
     .join(' · ');
 
-  const showEmbed = !m.running && m.success && m.dashboardUuid;
+  // Only the latest message embeds the live dashboard (avoids many heavy iframes);
+  // older ones keep their status + logs.
+  const showEmbed = isLast && !m.running && m.success && m.dashboardUuid;
+  const showFollowups = isLast && !m.running && m.success && !!m.followups?.length;
 
   return (
     <div className="msg assistant">
@@ -74,7 +85,17 @@ function AssistantBubble({ m }: { m: AssistantMessage }) {
         <LogList logs={m.logs} />
         {showEmbed && (
           <div className="embed-card">
-            <DashboardEmbed uuid={m.dashboardUuid!} />
+            <DashboardEmbed key={`${m.dashboardUuid}:${m.chartCount}`} uuid={m.dashboardUuid!} />
+          </div>
+        )}
+        {showFollowups && (
+          <div className="followups">
+            <span className="followups-label">Try next:</span>
+            {m.followups!.map((q) => (
+              <button key={q} className="ex-chip" onClick={() => onSuggest(q)}>
+                {q}
+              </button>
+            ))}
           </div>
         )}
       </div>
@@ -82,7 +103,15 @@ function AssistantBubble({ m }: { m: AssistantMessage }) {
   );
 }
 
-export function Message({ m }: { m: ChatMessage }) {
+export function Message({
+  m,
+  isLast,
+  onSuggest,
+}: {
+  m: ChatMessage;
+  isLast: boolean;
+  onSuggest: (q: string) => void;
+}) {
   if (m.role === 'user') {
     return (
       <div className="msg user">
@@ -90,5 +119,5 @@ export function Message({ m }: { m: ChatMessage }) {
       </div>
     );
   }
-  return <AssistantBubble m={m} />;
+  return <AssistantBubble m={m} isLast={isLast} onSuggest={onSuggest} />;
 }
