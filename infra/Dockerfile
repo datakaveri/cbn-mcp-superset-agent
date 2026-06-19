@@ -4,7 +4,9 @@
 # Override the sub-path with --build-arg VITE_BASE=/ for a root deploy.
 
 # ── Stage 1: build the React frontend ────────────────────────────────
-FROM node:22-slim AS frontend
+# Build on the native BUILD platform (not the --platform target): the output is
+# static JS/CSS, so this avoids slow QEMU emulation when cross-building for amd64.
+FROM --platform=$BUILDPLATFORM node:22-slim AS frontend
 WORKDIR /build
 RUN npm install -g pnpm@10
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
