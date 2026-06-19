@@ -112,9 +112,14 @@ class SupersetAuth:
                 return resp
             except requests.RequestException as e:
                 self._last_error = f"Superset {path} request error: {e}"
-                if attempt == 2:
-                    log.warning("%s", self._last_error)
-                    return None
+                # The token may be stale — e.g. _csrf() 401s with an expired token
+                # (raised before the POST, so the status-code retry above never
+                # fires). Clear it and re-login on the retry.
+                if attempt == 1:
+                    self._token = None
+                    continue
+                log.warning("%s", self._last_error)
+                return None
         return None
 
     def register_embedding(self, dashboard_id, allowed_domains=None):
