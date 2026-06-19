@@ -83,6 +83,49 @@ class DatasetSchema:
 
 
 @dataclass
+class ColumnProfile:
+    """What the profiler learned about one column (drives smart planning)."""
+    name: str
+    type: str
+    role: str = "dimension"        # "time" | "measure" | "dimension"
+    is_numeric: bool = False
+    is_temporal: bool = False
+    is_nullable: bool = False      # MCP rejects numeric aggregates on Nullable cols
+    cardinality: Optional[int] = None      # distinct count (None if not measured)
+    sample_values: list = field(default_factory=list)  # a few distinct values
+    num_min: Optional[float] = None
+    num_max: Optional[float] = None
+    num_avg: Optional[float] = None
+
+
+@dataclass
+class DatasetProfile:
+    """Profile of a dataset — column roles, cardinality, samples, numeric ranges."""
+    dataset_id: int
+    row_count: Optional[int] = None
+    columns: list[ColumnProfile] = field(default_factory=list)
+
+    def render(self) -> str:
+        """Compact, LLM-friendly description used in planning prompts."""
+        lines = []
+        if self.row_count is not None:
+            lines.append(f"row_count ≈ {self.row_count:,}")
+        for c in self.columns:
+            bits = [f"role={c.role}", f"type={c.type}"]
+            if c.is_nullable:
+                bits.append("NULLABLE(cannot SUM/AVG)")
+            if c.cardinality is not None:
+                bits.append(f"distinct={c.cardinality}")
+            if c.sample_values:
+                vals = ", ".join(str(v) for v in c.sample_values[:8])
+                bits.append(f"e.g. [{vals}]")
+            if c.is_numeric and c.num_min is not None:
+                bits.append(f"range={c.num_min}…{c.num_max}")
+            lines.append(f"  - {c.name}: {', '.join(bits)}")
+        return "\n".join(lines)
+
+
+@dataclass
 class ChartResult:
     """Result of creating a single chart."""
     spec: ChartSpec
@@ -102,6 +145,8 @@ class PipelineReport:
     sql_previews: dict[str, list] = field(default_factory=dict)  # {chart_name: rows}
     errors: list[str] = field(default_factory=list)
     success: bool = False
+    dataset: str = ""                                  # dataset the dashboard was built on
+    followups: list[str] = field(default_factory=list)  # contextual next-question suggestions
  
  
 @dataclass

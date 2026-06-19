@@ -235,7 +235,22 @@ class MCPClient:
         return self.call_tool("get_dashboard_info", {
             "request": {"identifier": dashboard_id}
         })
- 
+
+    def add_chart_to_existing_dashboard(self, dashboard_id, chart_id) -> AgentResult:
+        """Append a chart to an existing dashboard (auto-positioned by the MCP)."""
+        result = self.call_tool("add_chart_to_existing_dashboard", {
+            "request": {"dashboard_id": int(dashboard_id), "chart_id": int(chart_id)}
+        })
+        # This tool returns plain-text "Error: ..." on failure (not success=false).
+        if result.success and isinstance(result.data, str) and result.data.lstrip().startswith("Error"):
+            return AgentResult.fail(result.data.strip())
+        return result
+
+    def list_dashboards(self, page_size: int = 100) -> AgentResult:
+        return self.call_tool("list_dashboards", {
+            "request": {"page_size": page_size}
+        })
+
     def close(self):
         self._http.close()
  

@@ -72,11 +72,49 @@ class DashboardAgent:
             log.info("Dashboard verified (id=%d, uuid=%s)", dashboard_id, dashboard_uuid or "?")
  
         url = f"{SUPERSET_BASE_URL}/superset/dashboard/{dashboard_id}/"
- 
+
         return AgentResult.ok({
             "dashboard_id": dashboard_id,
             "uuid": dashboard_uuid,
             "url": url,
             "chart_count": len(chart_ids),
             "chart_ids": chart_ids,
+        })
+
+    def add_charts(self, dashboard_id, chart_results: list[ChartResult]) -> AgentResult:
+        """
+        Append successfully-created charts to an EXISTING dashboard (follow-up flow).
+        Returns the same shape as create_dashboard (with the dashboard's embed uuid).
+        """
+        chart_ids = [r.chart_id for r in chart_results if r.success and r.chart_id]
+        if not chart_ids:
+            return AgentResult.fail("No charts to add — all chart creations failed")
+
+        dashboard_id = int(dashboard_id)
+        added = []
+        for cid in chart_ids:
+            res = self.mcp.add_chart_to_existing_dashboard(dashboard_id, cid)
+            if res.success:
+                added.append(cid)
+            else:
+                log.warning("Failed to add chart %s to dashboard %s: %s",
+                            cid, dashboard_id, res.error)
+        if not added:
+            return AgentResult.fail("Could not add any charts to the dashboard")
+
+        # Re-read the dashboard to capture its embed uuid for the inline preview.
+        dashboard_uuid = ""
+        verify = self.mcp.get_dashboard_info(dashboard_id)
+        if verify.success:
+            vd = verify.data
+            vres = vd.get("result", vd) if isinstance(vd, dict) else {}
+            dashboard_uuid = (vres.get("uuid") or "") if isinstance(vres, dict) else ""
+
+        url = f"{SUPERSET_BASE_URL}/superset/dashboard/{dashboard_id}/"
+        return AgentResult.ok({
+            "dashboard_id": dashboard_id,
+            "uuid": dashboard_uuid,
+            "url": url,
+            "chart_count": len(added),
+            "chart_ids": added,
         })

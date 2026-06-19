@@ -52,6 +52,15 @@ RESPONSE FORMAT:
 }}
 
 IMPORTANT:
+- USE THE PROFILE (when given per dataset — column role, distinct count, sample values,
+  numeric range) to choose well:
+  * dimension = a low-cardinality column (role=dimension, small distinct count)
+  * metric_column = a numeric column (role=measure); time_column = a column with role=time
+  * map words in the request to columns via sample values (e.g. "deposits" →
+    filter type='CUSTOMER_DEPOSIT'; "inflow"→deposit, "outflow"→withdrawal)
+  * NEVER SUM/AVG a column marked NULLABLE — use COUNT, or pick a non-nullable column
+  * pick chart_type from the data shape: time→line/area, few categories→bar/pie,
+    many categories→table with row_limit (top-N), two dimensions→heatmap
 - metric_column must be a raw column name from the chosen dataset (or "*" for COUNT(*))
 - Multiple measures / comparisons: when the request combines or compares measures
   (e.g. "inflow and outflow", "X vs Y", "deposits and withdrawals"), set
@@ -96,6 +105,18 @@ CRITICAL filter rules:
 - Never use SQL expressions as filter val
 """
 
+SHORTLIST_SYSTEM_PROMPT = """You pick the datasets most relevant to a user's analytics
+request. Given dataset table names and the request, return the 1-3 table names most
+likely to contain the answer (fewer is better). Respond ONLY with JSON:
+{"datasets": ["table_name", ...]}"""
+
+INTENT_SYSTEM_PROMPT = """Classify whether a user's request should CREATE a new dashboard
+or ADD to / modify the dashboard they're currently viewing.
+Reply "followup" only when it clearly extends the current dashboard (e.g. "also show…",
+"add a…", "break that down by…", "include…", "on this/that dashboard"). A request that
+names a different subject or dataset is "new". When unsure, answer "new".
+Respond ONLY with JSON: {"intent": "new"}  or  {"intent": "followup"}"""
+
 
 class Orchestrator:
     """Generates plans via LLM and handles self-correction."""
@@ -103,13 +124,47 @@ class Orchestrator:
     def __init__(self, llm: LLMClient):
         self.llm = llm
 
-    def generate_plan(self, user_query: str, catalog: list[DatasetSchema]) -> AgentResult:
-        """Phase 1: Parse user intent and plan against the real dataset catalog."""
-        log.info("Generating plan for '%s' against %d datasets", user_query[:100], len(catalog))
+    def shortlist_datasets(self, user_query: str, catalog: list[DatasetSchema], k: int = 3) -> AgentResult:
+        """Pick the 1-k most relevant dataset table names (cheap, names-only)."""
+        names = [c.table_name for c in catalog]
+        user_prompt = (
+            "DATASET NAMES:\n" + "\n".join(f"- {n}" for n in names) +
+            f"\n\nUSER REQUEST:\n{user_query}\n\nReturn up to {k} most relevant table names."
+        )
+        try:
+            data = self.llm.generate_json(SHORTLIST_SYSTEM_PROMPT, user_prompt)
+        except LLMError as e:
+            return AgentResult.fail(f"Dataset shortlist failed: {e}")
+        picks = data.get("datasets") if isinstance(data, dict) else data
+        picks = [str(p).strip() for p in picks if str(p).strip()][:k] if isinstance(picks, list) else []
+        return AgentResult.ok(picks)
+
+    def classify_intent(self, user_query: str, context: Optional[dict]) -> str:
+        """Return "new" or "followup". Only "followup" when an active dashboard exists."""
+        if not context or not context.get("dashboard_id"):
+            return "new"
+        user_prompt = (
+            f'Current dashboard: "{context.get("title", "")}" '
+            f'(dataset: {context.get("dataset", "?")}, '
+            f'charts: {context.get("chart_names", [])})\n'
+            f"New request: {user_query}"
+        )
+        try:
+            data = self.llm.generate_json(INTENT_SYSTEM_PROMPT, user_prompt)
+        except LLMError:
+            return "new"
+        intent = (data.get("intent") if isinstance(data, dict) else "new") or "new"
+        return "followup" if str(intent).lower().strip() == "followup" else "new"
+
+    def generate_plan(self, user_query: str, candidates: list[DatasetSchema],
+                      profiles: Optional[dict] = None) -> AgentResult:
+        """Phase 1: Plan against enriched + profiled candidate datasets."""
+        log.info("Generating plan for '%s' over %d candidate dataset(s)",
+                 user_query[:100], len(candidates))
 
         user_prompt = (
-            "AVAILABLE DATASETS (choose the single most relevant one; use ONLY its columns):\n"
-            f"{self._format_catalog(catalog)}\n\n"
+            "CANDIDATE DATASETS (choose the single best one; use ONLY its columns):\n"
+            f"{self._format_candidates(candidates, profiles)}\n\n"
             f"USER REQUEST:\n{user_query}"
         )
 
@@ -138,17 +193,34 @@ class Orchestrator:
             lines.append(f'- "{s.table_name}": {cols}')
         return "\n".join(lines) if lines else "(no datasets available)"
 
+    @staticmethod
+    def _format_candidates(candidates: list[DatasetSchema], profiles: Optional[dict]) -> str:
+        """Render candidate datasets with columns + profile for profile-aware planning."""
+        blocks = []
+        for s in candidates:
+            cols = (", ".join(f"{n} ({t})" for n, t in list(s.columns.items())[:40])
+                    if s.columns else "(columns unavailable)")
+            block = [f'DATASET "{s.table_name}":', f"  columns: {cols}"]
+            prof = (profiles or {}).get(s.table_name)
+            if prof is not None:
+                block.append("  profile:")
+                block.append("\n".join("  " + ln for ln in prof.render().splitlines()))
+            blocks.append("\n".join(block))
+        return "\n\n".join(blocks) if blocks else "(no datasets available)"
+
     def refine_plan(
         self,
         user_query: str,
         previous_plan: PipelinePlan,
         schema: DatasetSchema,
         validation_errors: dict,
+        profile_text: str = "",
     ) -> AgentResult:
         """Phase 1b: Refine a plan based on actual schema and validation errors."""
         columns_info = json.dumps(schema.columns, indent=2)
         plan_json = self._plan_to_json(previous_plan)
         errors_json = json.dumps(validation_errors, indent=2, default=str)
+        profile_block = f"\nDataset profile:\n{profile_text}\n" if profile_text else ""
 
         user_prompt = f"""Original user request: {user_query}
 
@@ -157,7 +229,7 @@ Previous plan:
 
 Actual dataset columns (name → type):
 {columns_info}
-
+{profile_block}
 SQL validation errors:
 {errors_json}
 
