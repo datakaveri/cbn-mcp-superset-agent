@@ -116,6 +116,12 @@ _REST_VIZ: dict[str, str] = {
     "treemap":   "treemap_v2",
     "sunburst":  "sunburst_v2",
     "waterfall": "waterfall",
+    "gauge":     "gauge_chart",
+    "radar":     "radar",
+    "sankey":    "sankey_v2",
+    "histogram": "histogram",
+    "bubble":    "bubble_v2",
+    "real_heatmap": "heatmap_v2",
 }
 
 
@@ -185,6 +191,17 @@ class ChartAgent:
         label = spec.metric if (isinstance(spec.metric, str) and spec.metric) else f"{agg}({col})"
         metric = {"expressionType": "SIMPLE", "column": {"column_name": col},
                   "aggregate": agg, "label": label}
+        # primary + extra metrics (radar/bubble can use several)
+        metrics = [metric]
+        for m in (spec.extra_metrics or []):
+            if not isinstance(m, dict):
+                continue
+            c2 = m.get("metric_column") or m.get("name") or m.get("column")
+            if not c2:
+                continue
+            a2 = (m.get("aggregate") or agg).upper()
+            metrics.append({"expressionType": "SIMPLE", "column": {"column_name": c2},
+                            "aggregate": a2, "label": m.get("label") or f"{a2}({c2})"})
         dims = [d for d in (spec.dimension, spec.series_column) if d] or \
                [next(iter(schema.columns), "")]
         primary_dim = spec.dimension or dims[0]
@@ -203,6 +220,40 @@ class ChartAgent:
         elif viz == "waterfall":
             form_data = {"viz_type": viz, "datasource": ds, "metric": metric, "x_axis": primary_dim, "row_limit": row_limit}
             query = {"metrics": [metric], "columns": [primary_dim], "row_limit": row_limit, "orderby": [[label, False]]}
+        elif viz == "gauge_chart":
+            gb = [primary_dim] if spec.dimension else []
+            form_data = {"viz_type": viz, "datasource": ds, "metric": metric, "groupby": gb, "row_limit": 10}
+            query = {"metrics": [metric], "columns": gb, "row_limit": 10, "orderby": [[label, False]]}
+        elif viz == "radar":
+            form_data = {"viz_type": viz, "datasource": ds, "metrics": metrics, "groupby": [primary_dim], "row_limit": row_limit}
+            query = {"metrics": metrics, "columns": [primary_dim], "row_limit": row_limit, "orderby": []}
+        elif viz == "sankey_v2":
+            source = primary_dim
+            target = spec.series_column or (dims[1] if len(dims) > 1 else primary_dim)
+            form_data = {"viz_type": viz, "datasource": ds, "source": source, "target": target, "metric": metric}
+            query = {"metrics": [metric], "columns": [source, target], "row_limit": 200, "orderby": [[label, False]]}
+        elif viz == "histogram":
+            # histogram bins a raw numeric column (no aggregate)
+            form_data = {"viz_type": viz, "datasource": ds, "column": col, "bins": 20, "row_limit": 10000}
+            query = {"columns": [col], "row_limit": 10000, "orderby": []}
+        elif viz == "bubble_v2":
+            count_m = {"expressionType": "SIMPLE", "column": {"column_name": col},
+                       "aggregate": "COUNT", "label": f"COUNT({col})"}
+            x_m = metrics[0]
+            y_m = metrics[1] if len(metrics) > 1 else count_m
+            size_m = metrics[2] if len(metrics) > 2 else metrics[0]
+            qm, seen = [], set()
+            for mm in (x_m, y_m, size_m):
+                if mm["label"] not in seen:
+                    qm.append(mm); seen.add(mm["label"])
+            form_data = {"viz_type": viz, "datasource": ds, "x": x_m, "y": y_m, "size": size_m,
+                         "entity": primary_dim, "row_limit": row_limit}
+            query = {"metrics": qm, "columns": [primary_dim], "row_limit": row_limit, "orderby": []}
+        elif viz == "heatmap_v2":
+            x_ax = primary_dim
+            grp = spec.series_column or (dims[1] if len(dims) > 1 else primary_dim)
+            form_data = {"viz_type": viz, "datasource": ds, "x_axis": x_ax, "groupby": [grp], "metric": metric}
+            query = {"metrics": [metric], "columns": [x_ax, grp], "row_limit": 5000, "orderby": []}
         else:  # treemap_v2, funnel
             form_data = {"viz_type": viz, "datasource": ds, "metric": metric, "groupby": dims, "row_limit": row_limit}
             query = {"metrics": [metric], "columns": dims, "row_limit": row_limit, "orderby": [[label, False]]}

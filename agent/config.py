@@ -140,6 +140,11 @@ VALID_CHART_TYPES = {
     "treemap":    "treemap",
     "sunburst":   "sunburst",
     "waterfall":  "waterfall",
+    "gauge":      "gauge",
+    "radar":      "radar",
+    "sankey":     "sankey",
+    "histogram":  "histogram",
+    "bubble":     "bubble",
 }
 
 # ── MCP filter operators (exactly what Superset MCP accepts) ─────────

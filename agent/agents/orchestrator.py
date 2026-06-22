@@ -35,7 +35,7 @@ RESPONSE FORMAT:
   "charts": [
     {{
       "name": "chart display name",
-      "chart_type": "bar|stacked_bar|line|area|scatter|pie|donut|table|pivot_table|heatmap|big_number|big_number_total|combo|box_plot|funnel|treemap|sunburst|waterfall",
+      "chart_type": "bar|stacked_bar|line|area|scatter|pie|donut|table|pivot_table|heatmap|big_number|big_number_total|combo|box_plot|funnel|treemap|sunburst|waterfall|gauge|radar|sankey|histogram|bubble",
       "metric": "SUM(<numeric_col>)",
       "metric_column": "<numeric_col>",
       "aggregate": "SUM",
@@ -86,9 +86,14 @@ IMPORTANT:
   (e.g. transaction COUNT as bars + AVG amount as a line): set time_column, the
   primary metric, and one extra metric in extra_metrics.
 - Pick the chart type from intent: distribution/spread of a numeric column →
-  box_plot (dimension = the category to split by); hierarchy / part-of-whole →
+  box_plot (dimension = the category to split by); frequency of one numeric column →
+  histogram (metric_column = the numeric column); hierarchy / part-of-whole →
   treemap or sunburst (set dimension, and series_column for a 2nd level on sunburst);
-  ordered stages → funnel; cumulative contribution → waterfall.
+  ordered stages → funnel; cumulative contribution → waterfall; a single KPI value →
+  gauge; flow between two categories → sankey (dimension = source, series_column =
+  target); compare a few categories across several measures → radar (put the measures
+  in extra_metrics); relationship between measures → bubble (extra_metrics give the
+  y and size axes).
 """
 
 REFINEMENT_SYSTEM_PROMPT = """You are correcting a Superset dashboard plan based on actual dataset schema.
@@ -301,6 +306,8 @@ Please fix the plan to use only valid column names and correct any issues."""
                 # (SUM([...])), schema lookups, OR chart labels (a list label makes
                 # the MCP reject the chart with a generic "An error occurred").
                 agg = c.get("aggregate", "COUNT")
+                if isinstance(agg, list):          # multi-metric plans may send a list
+                    agg = str(agg[0]) if agg else "COUNT"
                 mcol = c.get("metric_column", "*")
                 mval = c.get("metric", "COUNT(*)")
                 labels = [str(x) for x in mval] if isinstance(mval, list) else []
