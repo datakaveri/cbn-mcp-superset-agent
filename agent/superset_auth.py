@@ -3,6 +3,7 @@ Superset authentication — simple admin/admin login.
 Gets a Bearer token for REST API fallback calls.
 """
 
+import json
 import logging
 import requests
 
@@ -138,6 +139,25 @@ class SupersetAuth:
         uuid = (resp.json().get("result") or {}).get("uuid")
         log.info("Registered dashboard %s for embedding (embed uuid=%s)", dashboard_id, uuid)
         return uuid
+
+    def create_chart(self, slice_name, viz_type, dataset_id, form_data, query_context):
+        """
+        Create a chart via Superset's REST API with a raw viz_type + form_data.
+        This is the fallback for chart types the MCP's generate_chart can't render
+        (box_plot, treemap, sunburst, funnel, waterfall, …). Storing query_context
+        makes it render deterministically. Returns the new chart id, or None.
+        """
+        resp = self._api_post("/chart/", {
+            "slice_name": slice_name,
+            "viz_type": viz_type,
+            "datasource_id": int(dataset_id),
+            "datasource_type": "table",
+            "params": json.dumps(form_data),
+            "query_context": json.dumps(query_context),
+        })
+        if resp is None:
+            return None
+        return (resp.json() or {}).get("id")
 
     def mint_guest_token(self, resource_uuid, rls=None):
         """

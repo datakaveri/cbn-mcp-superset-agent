@@ -35,7 +35,7 @@ RESPONSE FORMAT:
   "charts": [
     {{
       "name": "chart display name",
-      "chart_type": "bar|stacked_bar|line|area|scatter|pie|donut|table|pivot_table|heatmap|big_number|big_number_total|combo",
+      "chart_type": "bar|stacked_bar|line|area|scatter|pie|donut|table|pivot_table|heatmap|big_number|big_number_total|combo|box_plot|funnel|treemap|sunburst|waterfall",
       "metric": "SUM(<numeric_col>)",
       "metric_column": "<numeric_col>",
       "aggregate": "SUM",
@@ -85,8 +85,10 @@ IMPORTANT:
 - Use "combo" for a dual-axis time series comparing two measures of different scales
   (e.g. transaction COUNT as bars + AVG amount as a line): set time_column, the
   primary metric, and one extra metric in extra_metrics.
-- Only these chart_type values are supported — do NOT use box_plot, funnel, radar,
-  treemap, sunburst, or waterfall (the backend cannot render them).
+- Pick the chart type from intent: distribution/spread of a numeric column →
+  box_plot (dimension = the category to split by); hierarchy / part-of-whole →
+  treemap or sunburst (set dimension, and series_column for a 2nd level on sunburst);
+  ordered stages → funnel; cumulative contribution → waterfall.
 """
 
 REFINEMENT_SYSTEM_PROMPT = """You are correcting a Superset dashboard plan based on actual dataset schema.

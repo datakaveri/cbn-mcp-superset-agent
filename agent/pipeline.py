@@ -69,7 +69,8 @@ class Pipeline:
         self.orchestrator = Orchestrator(self.llm)
         self.dataset_agent = DatasetAgent(self.mcp)
         self.sql_agent = SQLAgent(self.mcp)
-        self.chart_agent = ChartAgent(self.mcp)
+        # auth enables the REST fallback for chart types the MCP can't render.
+        self.chart_agent = ChartAgent(self.mcp, self.auth)
         self.dashboard_agent = DashboardAgent(self.mcp)
 
     def _emit(self, phase: Phase, level: str, message: str):

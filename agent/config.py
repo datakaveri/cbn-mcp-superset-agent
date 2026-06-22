@@ -132,6 +132,14 @@ VALID_CHART_TYPES = {
     # Combo — dual-axis time series (bars + line), via mixed_timeseries
     "combo":            "mixed_timeseries",
     "mixed_timeseries": "mixed_timeseries",
+    # REST-fallback charts — the MCP can't render these, so chart_agent creates
+    # them via Superset's REST API (raw viz_type + form_data).
+    "box_plot":   "box_plot",
+    "boxplot":    "box_plot",
+    "funnel":     "funnel",
+    "treemap":    "treemap",
+    "sunburst":   "sunburst",
+    "waterfall":  "waterfall",
 }
 
 # ── MCP filter operators (exactly what Superset MCP accepts) ─────────

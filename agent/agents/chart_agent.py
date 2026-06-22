@@ -107,11 +107,24 @@ _OP_NORMALISE: dict[str, str] = {
 }
 
 
-class ChartAgent:
-    """Creates Superset charts via MCP with self-correction on failures."""
+# Chart types the MCP's generate_chart can't render → created via Superset REST
+# (chart_agent._create_rest_chart). Maps our type → the real Superset viz_type.
+_REST_VIZ: dict[str, str] = {
+    "box_plot":  "box_plot",
+    "boxplot":   "box_plot",
+    "funnel":    "funnel",
+    "treemap":   "treemap_v2",
+    "sunburst":  "sunburst_v2",
+    "waterfall": "waterfall",
+}
 
-    def __init__(self, mcp: MCPClient):
+
+class ChartAgent:
+    """Creates Superset charts via MCP, with a REST fallback for unsupported types."""
+
+    def __init__(self, mcp: MCPClient, auth=None):
         self.mcp = mcp
+        self.auth = auth   # SupersetAuth — enables the REST fallback for box_plot etc.
 
     # ── Public API ────────────────────────────────────────────────────
 
@@ -121,7 +134,11 @@ class ChartAgent:
         results: list[ChartResult] = []
 
         for spec in charts:
-            chart_result = self._create_single_chart(spec, schema)
+            # Route MCP-unsupported viz types to the Superset REST fallback.
+            if self.auth and spec.chart_type.lower() in _REST_VIZ:
+                chart_result = self._create_rest_chart(spec, schema)
+            else:
+                chart_result = self._create_single_chart(spec, schema)
             results.append(chart_result)
 
             if chart_result.success:
@@ -139,6 +156,62 @@ class ChartAgent:
             "failed": total - succeeded,
             "total": total,
         })
+
+    # ── REST fallback (chart types the MCP can't render) ──────────────
+
+    def _create_rest_chart(self, spec: ChartSpec, schema: DatasetSchema) -> ChartResult:
+        """Create a chart via Superset REST for viz types generate_chart rejects."""
+        result = ChartResult(spec=spec, retries=1)
+        try:
+            viz, form_data, query_context = self._build_rest_chart(spec, schema)
+            cid = self.auth.create_chart(spec.name, viz, schema.id, form_data, query_context)
+            if cid:
+                result.chart_id = int(cid)
+                result.success = True
+            else:
+                result.error = self.auth.last_error or "REST chart create failed"
+        except Exception as e:  # never let a builder error abort the run
+            result.error = f"REST chart create error: {e}"
+        return result
+
+    def _build_rest_chart(self, spec: ChartSpec, schema: DatasetSchema):
+        """Build (viz_type, form_data, query_context) for a REST-only chart.
+        query_context is stored so the chart renders deterministically."""
+        viz = _REST_VIZ[spec.chart_type.lower()]
+        agg = (spec.aggregate or "COUNT").upper()
+        col = spec.metric_column or next(iter(schema.columns), "")
+        if agg == "COUNT" and (not col or col == "*"):
+            col = spec.dimension or next(iter(schema.columns), "")
+        label = spec.metric if (isinstance(spec.metric, str) and spec.metric) else f"{agg}({col})"
+        metric = {"expressionType": "SIMPLE", "column": {"column_name": col},
+                  "aggregate": agg, "label": label}
+        dims = [d for d in (spec.dimension, spec.series_column) if d] or \
+               [next(iter(schema.columns), "")]
+        primary_dim = spec.dimension or dims[0]
+        row_limit = spec.row_limit if (spec.row_limit and spec.row_limit > 0) else 100
+        ds = f"{schema.id}__table"
+
+        if viz == "box_plot":
+            form_data = {"viz_type": viz, "datasource": ds, "metrics": [metric],
+                         "groupby": [primary_dim], "whisker_options": "Tukey", "row_limit": 1000}
+            query = {"metrics": [metric], "columns": [primary_dim], "row_limit": 1000, "orderby": [],
+                     "post_processing": [{"operation": "boxplot", "options": {
+                         "whisker_type": "tukey", "groupby": [primary_dim], "metrics": [label]}}]}
+        elif viz == "sunburst_v2":
+            form_data = {"viz_type": viz, "datasource": ds, "columns": dims, "metric": metric, "row_limit": row_limit}
+            query = {"metrics": [metric], "columns": dims, "row_limit": row_limit, "orderby": [[label, False]]}
+        elif viz == "waterfall":
+            form_data = {"viz_type": viz, "datasource": ds, "metric": metric, "x_axis": primary_dim, "row_limit": row_limit}
+            query = {"metrics": [metric], "columns": [primary_dim], "row_limit": row_limit, "orderby": [[label, False]]}
+        else:  # treemap_v2, funnel
+            form_data = {"viz_type": viz, "datasource": ds, "metric": metric, "groupby": dims, "row_limit": row_limit}
+            query = {"metrics": [metric], "columns": dims, "row_limit": row_limit, "orderby": [[label, False]]}
+
+        query_context = {"datasource": {"id": schema.id, "type": "table"}, "force": False,
+                         "result_format": "json", "result_type": "full",
+                         "form_data": form_data, "queries": [query]}
+        log.info("REST chart '%s' → viz=%s, dims=%s, metric=%s", spec.name, viz, dims, label)
+        return viz, form_data, query_context
 
     # ── Single-chart creation with retry loop ─────────────────────────
 
