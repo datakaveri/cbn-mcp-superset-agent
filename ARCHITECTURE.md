@@ -71,6 +71,9 @@ Each `POST /run` builds a fresh `Pipeline` and streams these phases:
    MCP limitation — see Constraints).
 9. **Create** (`agents/chart_agent.py`) — build each chart config and call
    `generate_chart` (self-corrects on MCP errors; supports multi-metric series).
+   Chart types the MCP can't render (box_plot, treemap, sunburst, funnel,
+   waterfall) are created via the **Superset REST fallback** (`superset_auth.
+   create_chart` — raw `viz_type` + `form_data` + stored `query_context`).
     Steps 5–9 run per dataset via `Pipeline._validate_keep_create`. **Dataset
     fallback**: if the chosen dataset produces *no rendered chart* (bad column
     types, broken virtual-dataset SQL, or a create-time error), the pipeline
@@ -118,6 +121,15 @@ Multi-stage Docker: a Node stage builds the frontend with
 `VITE_BASE=/chatbot/` (must match `APP_BASE_PATH`); the Python stage serves it +
 the API on `:5001`. Behind an HTTPS reverse proxy that routes the `/chatbot/`
 subtree to the container.
+
+## Chart types
+- **Via the MCP `generate_chart`**: xy (bar/line/area/scatter, +stacked/horizontal/
+  grouped), pie/donut, table, pivot_table (heatmap), big_number, mixed_timeseries
+  (combo), handlebars.
+- **Via the Superset REST fallback** (`chart_agent` + `superset_auth.create_chart`):
+  box_plot, treemap, sunburst, funnel, waterfall — the MCP rejects these, so they're
+  created with a raw `viz_type` + `form_data`. Add a new viz by extending
+  `chart_agent._REST_VIZ` + `_build_rest_chart`.
 
 ## Known constraints
 - **Non-numeric aggregates**: the MCP rejects SUM/AVG/MIN/MAX on ClickHouse
