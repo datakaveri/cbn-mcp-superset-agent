@@ -32,32 +32,42 @@ from config import MAX_CHART_RETRIES, MCP_VALID_OPS
 log = logging.getLogger(__name__)
 
 # ── Chart-type → family mapping (drives config builder dispatch) ──────
-# Any chart_type not in this map falls through to "xy" as the safe default.
+# Only families the MCP actually supports. Any chart_type not in this map falls
+# through to "xy". Types the MCP REJECTS (box_plot/funnel/radar/waterfall/
+# treemap/sunburst) are remapped here to the nearest supported family so a request
+# still renders instead of failing.
 _FAMILY_MAP: dict[str, str] = {
+    # XY family
     "bar":              "xy",
     "stacked_bar":      "xy",
+    "dist_bar":         "xy",
     "line":             "xy",
     "area":             "xy",
     "stacked_area":     "xy",
     "scatter":          "xy",
     "bubble":           "xy",
-    "dist_bar":         "xy",
+    # Pie family
     "pie":              "pie",
     "donut":            "pie",
+    # Table
     "table":            "table",
-    "box_plot":         "box_plot",
-    "boxplot":          "box_plot",
-    "funnel":           "funnel",
-    "radar":            "radar",
-    # MCP has no native heatmap chart_type tag.
-    # pivot_table is the correct MCP type; we set color_scheme + conditional
-    # formatting in the config so Superset renders it as a visual heatmap.
+    # Pivot matrix (also renders "heatmap" requests)
+    "pivot_table":      "pivot_table",
     "heatmap":          "pivot_table",
-    "waterfall":        "waterfall",
-    "treemap":          "treemap",
-    "sunburst":         "sunburst",
+    # Big number
     "big_number":       "big_number",
     "big_number_total": "big_number",
+    # Combo — dual-axis time series (bars + line)
+    "mixed_timeseries": "mixed",
+    "combo":            "mixed",
+    # Not natively supported → nearest supported family
+    "box_plot":         "xy",
+    "boxplot":          "xy",
+    "funnel":           "xy",
+    "radar":            "xy",
+    "waterfall":        "xy",
+    "treemap":          "pie",
+    "sunburst":         "pie",
 }
 
 # Maps MCP xy config "kind" values from chart_type
@@ -227,10 +237,17 @@ class ChartAgent:
             "funnel":       self._funnel_config,
             "radar":        self._radar_config,
             "pivot_table":  self._pivot_table_config,   # heatmap routes here
+            "big_number":   self._big_number_config,
+            "mixed":        self._mixed_timeseries_config,  # combo: dual-axis time series
+            # NOTE: box_plot/funnel/radar/waterfall/treemap/sunburst are NOT
+            # supported by the MCP — _FAMILY_MAP remaps them to xy/pie above, so
+            # their legacy builders below are unreachable.
             "waterfall":    self._waterfall_config,
             "treemap":      self._treemap_config,
             "sunburst":     self._sunburst_config,
-            "big_number":   self._big_number_config,
+            "box_plot":     self._box_plot_config,
+            "funnel":       self._funnel_config,
+            "radar":        self._radar_config,
         }
 
         builder = dispatch.get(family, self._xy_config)
@@ -330,6 +347,43 @@ class ChartAgent:
             config["row_limit"] = spec.row_limit
             log.info("XY chart '%s': row_limit=%d", spec.name, spec.row_limit)
 
+        return config
+
+    # ── Combo (mixed_timeseries) ──────────────────────────────────────
+
+    def _mixed_timeseries_config(self, spec: ChartSpec, schema: DatasetSchema) -> dict:
+        """
+        Dual-axis time series: the primary metric as bars and the first extra
+        metric as a line on a secondary axis — e.g. "transaction count and
+        average amount over time". Falls back to bars-only if there's no second
+        metric.
+        """
+        x_col = spec.time_column or spec.dimension or ""
+        col_type = schema.columns.get(x_col, "")
+        config: dict = {
+            "chart_type": "mixed_timeseries",
+            "x": {"name": x_col, "dtype": col_type},
+            "y": [{
+                "name": spec.metric_column,
+                "aggregate": spec.aggregate.upper(),
+                "label": spec.metric if isinstance(spec.metric, str) else spec.metric_column,
+            }],
+            "primary_kind": "bar",
+            "secondary_kind": "line",
+        }
+        if any(t in col_type.upper() for t in ("TIMESTAMP", "DATETIME", "DATE", "TIME")):
+            config["time_grain"] = "P1D"
+
+        extra = spec.extra_metrics or []
+        if extra and isinstance(extra[0], dict):
+            m = extra[0]
+            col = m.get("metric_column") or m.get("name") or m.get("column")
+            if col:
+                agg = (m.get("aggregate") or spec.aggregate).upper()
+                config["y_secondary"] = [{"name": col, "aggregate": agg,
+                                          "label": m.get("label") or col}]
+        log.info("Mixed/combo chart '%s': x=%s, secondary=%s",
+                 spec.name, x_col, bool(config.get("y_secondary")))
         return config
 
     # ── Pie / Donut ───────────────────────────────────────────────────

@@ -101,46 +101,37 @@ Time column: timestamp.
 """.strip()
 
 # ── Valid Superset Chart Types ────────────────────────────────────────
-# Maps user-friendly aliases → canonical MCP chart_type string.
-# The chart_agent uses this to route to the correct config builder.
-# "family" groups: xy (bar/line/area/scatter), pie, table, box_plot,
-# funnel, radar, heatmap, waterfall, treemap, sunburst, sankey.
+# ONLY the chart types this Superset MCP's generate_chart actually accepts
+# (verified against the live service + schema). The accepted tags are:
+#   xy (bar/line/area/scatter), pie, table, pivot_table, big_number,
+#   mixed_timeseries, handlebars.
+# The MCP REJECTS box_plot / funnel / radar / treemap / sunburst / waterfall, so
+# we don't offer them; if one is requested anyway, chart_agent._FAMILY_MAP remaps
+# it to the nearest supported family.
 VALID_CHART_TYPES = {
-    # XY family — rendered as echarts xy
+    # XY family (echarts) — bar/line/area/scatter, plus stacked/grouped variants
     "bar":          "bar",
     "stacked_bar":  "bar",
+    "dist_bar":     "bar",
     "line":         "line",
     "area":         "area",
     "stacked_area": "area",
     "scatter":      "scatter",
-    "bubble":       "bubble",
-    "dist_bar":     "bar",
+    "bubble":       "scatter",
     # Pie family
     "pie":          "pie",
     "donut":        "donut",
     # Table
     "table":        "table",
-    # Box plot
-    "box_plot":     "box_plot",
-    "boxplot":      "box_plot",
-    # Funnel
-    "funnel":       "funnel",
-    # Radar
-    "radar":        "radar",
-    # Heatmap — MCP has no native "heatmap" chart_type tag.
-    # We send "pivot_table" with color_scheme/conditional_formatting so
-    # Superset renders it as a visual heatmap. This is transparent to the user.
-    "heatmap":      "pivot_table",
-    # Native pivot table
+    # Pivot matrix (also used to render "heatmap" requests)
     "pivot_table":  "pivot_table",
-    # Waterfall
-    "waterfall":    "waterfall",
-    # Treemap / sunburst
-    "treemap":      "treemap",
-    "sunburst":     "sunburst",
-    # Big Number
+    "heatmap":      "pivot_table",
+    # Big number
     "big_number":          "big_number",
     "big_number_total":    "big_number_total",
+    # Combo — dual-axis time series (bars + line), via mixed_timeseries
+    "combo":            "mixed_timeseries",
+    "mixed_timeseries": "mixed_timeseries",
 }
 
 # ── MCP filter operators (exactly what Superset MCP accepts) ─────────

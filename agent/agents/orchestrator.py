@@ -35,7 +35,7 @@ RESPONSE FORMAT:
   "charts": [
     {{
       "name": "chart display name",
-      "chart_type": "bar|line|pie|table|dist_bar|box_plot|scatter|funnel|radar|heatmap|stacked_bar|area|stacked_area|treemap|sunburst|waterfall|big_number|big_number_total",
+      "chart_type": "bar|stacked_bar|line|area|scatter|pie|donut|table|pivot_table|heatmap|big_number|big_number_total|combo",
       "metric": "SUM(<numeric_col>)",
       "metric_column": "<numeric_col>",
       "aggregate": "SUM",
@@ -81,7 +81,12 @@ IMPORTANT:
   * val for numeric comparisons must be a number, not a string
 - Only filter on columns that actually exist in the chosen dataset
 - For "top N" requests, set row_limit=N and do NOT add a filter for it
-- For heatmap charts: dimension = the ROW axis, series_column = the COLUMN axis. Always set series_column for heatmaps.
+- For heatmap charts: dimension = the ROW axis, series_column = the COLUMN axis. Always set series_column for heatmaps. (Rendered as a pivot matrix.)
+- Use "combo" for a dual-axis time series comparing two measures of different scales
+  (e.g. transaction COUNT as bars + AVG amount as a line): set time_column, the
+  primary metric, and one extra metric in extra_metrics.
+- Only these chart_type values are supported — do NOT use box_plot, funnel, radar,
+  treemap, sunburst, or waterfall (the backend cannot render them).
 """
 
 REFINEMENT_SYSTEM_PROMPT = """You are correcting a Superset dashboard plan based on actual dataset schema.
