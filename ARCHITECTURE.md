@@ -127,8 +127,9 @@ subtree to the container.
   grouped), pie/donut, table, pivot_table (heatmap), big_number, mixed_timeseries
   (combo), handlebars.
 - **Via the Superset REST fallback** (`chart_agent` + `superset_auth.create_chart`):
-  box_plot, treemap, sunburst, funnel, waterfall — the MCP rejects these, so they're
-  created with a raw `viz_type` + `form_data`. Add a new viz by extending
+  box_plot, histogram, treemap, sunburst, funnel, waterfall, gauge, radar, sankey,
+  bubble — the MCP rejects these, so they're created with a raw `viz_type` +
+  `form_data` (+ stored `query_context`). Add a new viz by extending
   `chart_agent._REST_VIZ` + `_build_rest_chart`.
 
 ## Known constraints
