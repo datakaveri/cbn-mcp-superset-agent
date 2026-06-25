@@ -27,7 +27,8 @@ UI → http://localhost:5001 · health → http://localhost:5001/health
 
 ## Build/run with Docker directly
 
-The build context is the **repo root** (the Dockerfile copies `agent/`):
+The build context is the **repo root** (the multi-stage Dockerfile builds the
+React frontend, then copies `agent/` + the built `frontend/dist`):
 
 ```bash
 # from the repo root
@@ -51,11 +52,16 @@ password lack defaults; everything else has a sensible default.
 ## Serving under a sub-path
 
 When the UI is behind a reverse proxy at a sub-path (e.g.
-`https://dashboard.idx-ng.com/chatbot`), set **`APP_BASE_PATH=/chatbot`**. The
-server then injects `<base href="/chatbot/">` so the browser resolves
-`auth-config`, `run`, and assets under the prefix — otherwise the frontend calls
-`/auth-config` at the domain root, the auth bootstrap fails, and the UI loads
-**without** the login redirect.
+`https://dashboard.idx-ng.com/chatbot`), **two settings must agree**:
+
+1. **Build** the frontend with that base: `--build-arg VITE_BASE=/chatbot/`
+   (this is the Dockerfile default). Vite bakes the prefix into every asset and
+   API URL, so the React app requests `/chatbot/auth-config`, `/chatbot/run`, etc.
+2. **Run** the container with **`APP_BASE_PATH=/chatbot`** so the server strips
+   the prefix from incoming requests (`/chatbot/run` → `/run`).
+
+For a root deploy, build with `--build-arg VITE_BASE=/` and leave `APP_BASE_PATH`
+empty.
 
 The proxy **must route the whole `/chatbot/` subtree** to this container — not
 just the bare `/chatbot` path. The app strips the prefix itself (via
@@ -77,8 +83,9 @@ to Superset (which answers 404):
 location = /chatbot { proxy_pass http://mcp-agent-ui:5001/; }  # ONLY /chatbot, subtree leaks to Superset
 ```
 
-If your proxy sends `X-Forwarded-Prefix`, the app uses it automatically and you
-can leave `APP_BASE_PATH` empty.
+If your proxy sends `X-Forwarded-Prefix`, the app uses it for request stripping
+and you can leave `APP_BASE_PATH` empty — but the frontend's `VITE_BASE` must
+still be built to match the sub-path (it's baked in at build time, not runtime).
 
 ## ⚠️ Keycloak one-time setup (required)
 

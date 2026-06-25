@@ -92,7 +92,7 @@ class SQLAgent:
             table = schema.table_name or schema.name
             if schema.schema_name and "." not in table:
                 table = f"{schema.schema_name}.{table}"
-        metric_expr = self._build_metric_expr(chart)
+        metric_sql = ", ".join(self._build_metric_exprs(chart))
         where_clause = self._build_where_clause(chart.filters)
 
         # Determine the effective row limit for this probe
@@ -108,13 +108,13 @@ class SQLAgent:
             if "VARCHAR" in ts_type.upper() or "TEXT" in ts_type.upper():
                 time_col = f"CAST({chart.time_column} AS DATE)"
 
-            select_cols = f"{time_col} AS time_dim, {metric_expr} AS metric_val"
+            select_cols = f"{time_col} AS time_dim, {metric_sql}"
             group_cols = time_col
             order_col = time_col
 
             # Include series_column if set (e.g. stacked area by type)
             if chart.series_column:
-                select_cols = f"{time_col} AS time_dim, {chart.series_column}, {metric_expr} AS metric_val"
+                select_cols = f"{time_col} AS time_dim, {chart.series_column}, {metric_sql}"
                 group_cols = f"{time_col}, {chart.series_column}"
 
             sql = (
@@ -129,7 +129,7 @@ class SQLAgent:
         # ── No-dimension aggregate (e.g. big_number) ───────────────────
         elif not chart.dimension:
             sql = (
-                f"SELECT {metric_expr} AS metric_val "
+                f"SELECT {metric_sql} "
                 f"FROM {table} "
                 f"{where_clause}"
                 f"LIMIT {limit}"
@@ -138,12 +138,12 @@ class SQLAgent:
         # ── All other chart families ───────────────────────────────────
         else:
             dimension = chart.dimension
-            select_cols = f"{dimension}, {metric_expr} AS metric_val"
+            select_cols = f"{dimension}, {metric_sql}"
             group_cols = dimension
 
             # For grouped/stacked charts include the series_column
             if chart.series_column and chart.series_column != dimension:
-                select_cols = f"{dimension}, {chart.series_column}, {metric_expr} AS metric_val"
+                select_cols = f"{dimension}, {chart.series_column}, {metric_sql}"
                 group_cols = f"{dimension}, {chart.series_column}"
 
             # ORDER BY metric DESC so top-N preview matches chart ordering
@@ -170,7 +170,7 @@ class SQLAgent:
         if not rows:
             return AgentResult.fail(
                 f"Query returned 0 rows for chart '{chart.name}' — "
-                f"check dimension '{chart.dimension}' or metric '{metric_expr}'"
+                f"check dimension '{chart.dimension}' or metric '{metric_sql}'"
             )
 
         return AgentResult.ok(rows)
@@ -252,15 +252,30 @@ class SQLAgent:
         return "WHERE " + " AND ".join(clauses) + " "
 
     @staticmethod
-    def _build_metric_expr(chart: ChartSpec) -> str:
-        """Build a SQL metric expression from a ChartSpec."""
-        agg = chart.aggregate.upper()
-        col = chart.metric_column
-
+    def _metric_sql(col, agg, raw=None) -> str:
+        """SQL for a single aggregate metric."""
+        agg = (agg or "COUNT").upper()
         if agg == "COUNT":
             return f"COUNT({col})"
-        elif agg in ("SUM", "AVG", "MIN", "MAX"):
+        if agg == "COUNT_DISTINCT":
+            return f"COUNT(DISTINCT {col})"
+        if agg in ("SUM", "AVG", "MIN", "MAX", "STDDEV", "VAR", "MEDIAN"):
             return f"{agg}({col})"
-        else:
-            # Raw expression fallback (e.g. LLM produced a CASE expression)
-            return chart.metric
+        # Raw expression fallback (e.g. LLM produced a CASE expression)
+        return raw or f"{agg}({col})"
+
+    def _build_metric_exprs(self, chart: ChartSpec) -> list:
+        """
+        Aliased SQL for the primary metric plus any extra_metrics (multi-metric
+        charts, e.g. inflow + outflow as two series). The first alias is always
+        'metric_val' so existing ORDER BY / row handling keeps working.
+        """
+        exprs = [f"{self._metric_sql(chart.metric_column, chart.aggregate, chart.metric)} AS metric_val"]
+        for i, m in enumerate(chart.extra_metrics or []):
+            if not isinstance(m, dict):
+                continue
+            col = m.get("metric_column") or m.get("name") or m.get("column")
+            if not col:
+                continue
+            exprs.append(f"{self._metric_sql(col, m.get('aggregate') or chart.aggregate)} AS metric_val_{i+1}")
+        return exprs

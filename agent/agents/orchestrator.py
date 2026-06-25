@@ -35,7 +35,7 @@ RESPONSE FORMAT:
   "charts": [
     {{
       "name": "chart display name",
-      "chart_type": "bar|line|pie|table|dist_bar|box_plot|scatter|funnel|radar|heatmap|stacked_bar|area|stacked_area|treemap|sunburst|waterfall|big_number|big_number_total",
+      "chart_type": "bar|stacked_bar|line|area|scatter|pie|donut|table|pivot_table|heatmap|big_number|big_number_total|combo|box_plot|funnel|treemap|sunburst|waterfall|gauge|radar|sankey|histogram|bubble",
       "metric": "SUM(<numeric_col>)",
       "metric_column": "<numeric_col>",
       "aggregate": "SUM",
@@ -52,7 +52,23 @@ RESPONSE FORMAT:
 }}
 
 IMPORTANT:
+- USE THE PROFILE (when given per dataset — column role, distinct count, sample values,
+  numeric range) to choose well:
+  * dimension = a low-cardinality column (role=dimension, small distinct count)
+  * metric_column = a numeric column (role=measure); time_column = a column with role=time
+  * map words in the request to columns via sample values (e.g. "deposits" →
+    filter type='CUSTOMER_DEPOSIT'; "inflow"→deposit, "outflow"→withdrawal)
+  * NEVER apply SUM/AVG/MIN/MAX to a NULLABLE, BOOL, or text column — Superset
+    rejects it. For a rate over a boolean/flag (e.g. "approval rate"), do NOT
+    AVG the flag; instead COUNT with a filter (e.g. metric=COUNT(*), filter
+    approved=true) or pick a numeric column / COUNT
+  * pick chart_type from the data shape: time→line/area, few categories→bar/pie,
+    many categories→table with row_limit (top-N), two dimensions→heatmap
 - metric_column must be a raw column name from the chosen dataset (or "*" for COUNT(*))
+- Multiple measures / comparisons: when the request combines or compares measures
+  (e.g. "inflow and outflow", "X vs Y", "deposits and withdrawals"), set
+  "metric_column" to a LIST of the relevant columns (e.g. ["total_in","total_out"])
+  and "metric" to a matching list — the chart then renders one series per measure.
 - aggregate must be the SQL function name (e.g. "SUM", "COUNT", "AVG", "MIN", "MAX")
 - time_column should be a real temporal/timestamp column, set only for time-series charts (line, area)
 - dimension is the primary GROUP BY column (shown on X axis or as slices)
@@ -65,7 +81,19 @@ IMPORTANT:
   * val for numeric comparisons must be a number, not a string
 - Only filter on columns that actually exist in the chosen dataset
 - For "top N" requests, set row_limit=N and do NOT add a filter for it
-- For heatmap charts: dimension = the ROW axis, series_column = the COLUMN axis. Always set series_column for heatmaps.
+- For heatmap charts: dimension = the ROW axis, series_column = the COLUMN axis. Always set series_column for heatmaps. (Rendered as a pivot matrix.)
+- Use "combo" for a dual-axis time series comparing two measures of different scales
+  (e.g. transaction COUNT as bars + AVG amount as a line): set time_column, the
+  primary metric, and one extra metric in extra_metrics.
+- Pick the chart type from intent: distribution/spread of a numeric column →
+  box_plot (dimension = the category to split by); frequency of one numeric column →
+  histogram (metric_column = the numeric column); hierarchy / part-of-whole →
+  treemap or sunburst (set dimension, and series_column for a 2nd level on sunburst);
+  ordered stages → funnel; cumulative contribution → waterfall; a single KPI value →
+  gauge; flow between two categories → sankey (dimension = source, series_column =
+  target); compare a few categories across several measures → radar (put the measures
+  in extra_metrics); relationship between measures → bubble (extra_metrics give the
+  y and size axes).
 """
 
 REFINEMENT_SYSTEM_PROMPT = """You are correcting a Superset dashboard plan based on actual dataset schema.
@@ -79,6 +107,11 @@ The previous plan had issues. You are given:
 Produce a corrected JSON plan using ONLY columns that exist in the schema.
 Respond ONLY with valid JSON, same format as before. No markdown fences.
 
+If the user's request involves multiple measures or a comparison (e.g. "inflow
+and outflow", "X vs Y", "deposits and withdrawals"), include ALL of them: set
+"metric_column" to a LIST of the matching columns (one series each) — map each
+measure to the closest column (e.g. inflow → total_in, outflow → total_out).
+
 CRITICAL filter rules:
 - op must be one of: =, !=, >, <, >=, <=, LIKE, ILIKE, NOT LIKE, IN, NOT IN
 - Use "=" not "==" for equality checks
@@ -87,6 +120,18 @@ CRITICAL filter rules:
 - Never use SQL expressions as filter val
 """
 
+SHORTLIST_SYSTEM_PROMPT = """You pick the datasets most relevant to a user's analytics
+request. Given dataset table names and the request, return the 3 most relevant table
+names, best first (always return at least 2 when plausible, so a fallback exists if
+the top choice doesn't work). Respond ONLY with JSON: {"datasets": ["table_name", ...]}"""
+
+INTENT_SYSTEM_PROMPT = """Classify whether a user's request should CREATE a new dashboard
+or ADD to / modify the dashboard they're currently viewing.
+Reply "followup" only when it clearly extends the current dashboard (e.g. "also show…",
+"add a…", "break that down by…", "include…", "on this/that dashboard"). A request that
+names a different subject or dataset is "new". When unsure, answer "new".
+Respond ONLY with JSON: {"intent": "new"}  or  {"intent": "followup"}"""
+
 
 class Orchestrator:
     """Generates plans via LLM and handles self-correction."""
@@ -94,13 +139,47 @@ class Orchestrator:
     def __init__(self, llm: LLMClient):
         self.llm = llm
 
-    def generate_plan(self, user_query: str, catalog: list[DatasetSchema]) -> AgentResult:
-        """Phase 1: Parse user intent and plan against the real dataset catalog."""
-        log.info("Generating plan for '%s' against %d datasets", user_query[:100], len(catalog))
+    def shortlist_datasets(self, user_query: str, catalog: list[DatasetSchema], k: int = 3) -> AgentResult:
+        """Pick the 1-k most relevant dataset table names (cheap, names-only)."""
+        names = [c.table_name for c in catalog]
+        user_prompt = (
+            "DATASET NAMES:\n" + "\n".join(f"- {n}" for n in names) +
+            f"\n\nUSER REQUEST:\n{user_query}\n\nReturn up to {k} most relevant table names."
+        )
+        try:
+            data = self.llm.generate_json(SHORTLIST_SYSTEM_PROMPT, user_prompt)
+        except LLMError as e:
+            return AgentResult.fail(f"Dataset shortlist failed: {e}")
+        picks = data.get("datasets") if isinstance(data, dict) else data
+        picks = [str(p).strip() for p in picks if str(p).strip()][:k] if isinstance(picks, list) else []
+        return AgentResult.ok(picks)
+
+    def classify_intent(self, user_query: str, context: Optional[dict]) -> str:
+        """Return "new" or "followup". Only "followup" when an active dashboard exists."""
+        if not context or not context.get("dashboard_id"):
+            return "new"
+        user_prompt = (
+            f'Current dashboard: "{context.get("title", "")}" '
+            f'(dataset: {context.get("dataset", "?")}, '
+            f'charts: {context.get("chart_names", [])})\n'
+            f"New request: {user_query}"
+        )
+        try:
+            data = self.llm.generate_json(INTENT_SYSTEM_PROMPT, user_prompt)
+        except LLMError:
+            return "new"
+        intent = (data.get("intent") if isinstance(data, dict) else "new") or "new"
+        return "followup" if str(intent).lower().strip() == "followup" else "new"
+
+    def generate_plan(self, user_query: str, candidates: list[DatasetSchema],
+                      profiles: Optional[dict] = None) -> AgentResult:
+        """Phase 1: Plan against enriched + profiled candidate datasets."""
+        log.info("Generating plan for '%s' over %d candidate dataset(s)",
+                 user_query[:100], len(candidates))
 
         user_prompt = (
-            "AVAILABLE DATASETS (choose the single most relevant one; use ONLY its columns):\n"
-            f"{self._format_catalog(catalog)}\n\n"
+            "CANDIDATE DATASETS (choose the single best one; use ONLY its columns):\n"
+            f"{self._format_candidates(candidates, profiles)}\n\n"
             f"USER REQUEST:\n{user_query}"
         )
 
@@ -129,17 +208,34 @@ class Orchestrator:
             lines.append(f'- "{s.table_name}": {cols}')
         return "\n".join(lines) if lines else "(no datasets available)"
 
+    @staticmethod
+    def _format_candidates(candidates: list[DatasetSchema], profiles: Optional[dict]) -> str:
+        """Render candidate datasets with columns + profile for profile-aware planning."""
+        blocks = []
+        for s in candidates:
+            cols = (", ".join(f"{n} ({t})" for n, t in list(s.columns.items())[:40])
+                    if s.columns else "(columns unavailable)")
+            block = [f'DATASET "{s.table_name}":', f"  columns: {cols}"]
+            prof = (profiles or {}).get(s.table_name)
+            if prof is not None:
+                block.append("  profile:")
+                block.append("\n".join("  " + ln for ln in prof.render().splitlines()))
+            blocks.append("\n".join(block))
+        return "\n\n".join(blocks) if blocks else "(no datasets available)"
+
     def refine_plan(
         self,
         user_query: str,
         previous_plan: PipelinePlan,
         schema: DatasetSchema,
         validation_errors: dict,
+        profile_text: str = "",
     ) -> AgentResult:
         """Phase 1b: Refine a plan based on actual schema and validation errors."""
         columns_info = json.dumps(schema.columns, indent=2)
         plan_json = self._plan_to_json(previous_plan)
         errors_json = json.dumps(validation_errors, indent=2, default=str)
+        profile_block = f"\nDataset profile:\n{profile_text}\n" if profile_text else ""
 
         user_prompt = f"""Original user request: {user_query}
 
@@ -148,7 +244,7 @@ Previous plan:
 
 Actual dataset columns (name → type):
 {columns_info}
-
+{profile_block}
 SQL validation errors:
 {errors_json}
 
@@ -203,18 +299,44 @@ Please fix the plan to use only valid column names and correct any issues."""
         try:
             charts = []
             for c in data.get("charts", []):
+                # The LLM may return metric_column AND metric as parallel LISTS for
+                # multi-measure charts (e.g. inflow + outflow). ChartSpec wants a
+                # single primary metric, so normalize: first → primary, the rest →
+                # extra_metrics. This stops list values leaking downstream into SQL
+                # (SUM([...])), schema lookups, OR chart labels (a list label makes
+                # the MCP reject the chart with a generic "An error occurred").
+                agg = c.get("aggregate", "COUNT")
+                if isinstance(agg, list):          # multi-metric plans may send a list
+                    agg = str(agg[0]) if agg else "COUNT"
+                mcol = c.get("metric_column", "*")
+                mval = c.get("metric", "COUNT(*)")
+                labels = [str(x) for x in mval] if isinstance(mval, list) else []
+                extra = list(c.get("extra_metrics") or [])
+                if isinstance(mcol, list):
+                    cols = [str(x) for x in mcol if x]
+                    mcol = cols[0] if cols else "*"
+                    for i, ec in enumerate(cols[1:], start=1):
+                        extra.append({
+                            "metric_column": ec, "aggregate": agg,
+                            "label": labels[i] if i < len(labels) else f"{agg.title()} {ec}",
+                        })
+                # The primary metric label must be a single string, never a list.
+                metric = labels[0] if labels else (mval if isinstance(mval, str) else "COUNT(*)")
+                dim = c.get("dimension", "")
+                if isinstance(dim, list):
+                    dim = str(dim[0]) if dim else ""
                 charts.append(ChartSpec(
                     name=c.get("name", "Untitled Chart"),
                     chart_type=c.get("chart_type", "bar"),
-                    metric=c.get("metric", "COUNT(*)"),
-                    metric_column=c.get("metric_column", "*"),
-                    aggregate=c.get("aggregate", "COUNT"),
-                    dimension=c.get("dimension", ""),
+                    metric=metric,
+                    metric_column=mcol,
+                    aggregate=agg,
+                    dimension=dim,
                     time_column=c.get("time_column"),
                     filters=c.get("filters"),
                     stack=bool(c.get("stack", False)),
                     row_limit=c.get("row_limit"),
-                    extra_metrics=c.get("extra_metrics"),
+                    extra_metrics=extra or None,
                     series_column=c.get("series_column"),
                 ))
 

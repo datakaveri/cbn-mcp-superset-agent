@@ -32,32 +32,42 @@ from config import MAX_CHART_RETRIES, MCP_VALID_OPS
 log = logging.getLogger(__name__)
 
 # ── Chart-type → family mapping (drives config builder dispatch) ──────
-# Any chart_type not in this map falls through to "xy" as the safe default.
+# Only families the MCP actually supports. Any chart_type not in this map falls
+# through to "xy". Types the MCP REJECTS (box_plot/funnel/radar/waterfall/
+# treemap/sunburst) are remapped here to the nearest supported family so a request
+# still renders instead of failing.
 _FAMILY_MAP: dict[str, str] = {
+    # XY family
     "bar":              "xy",
     "stacked_bar":      "xy",
+    "dist_bar":         "xy",
     "line":             "xy",
     "area":             "xy",
     "stacked_area":     "xy",
     "scatter":          "xy",
     "bubble":           "xy",
-    "dist_bar":         "xy",
+    # Pie family
     "pie":              "pie",
     "donut":            "pie",
+    # Table
     "table":            "table",
-    "box_plot":         "box_plot",
-    "boxplot":          "box_plot",
-    "funnel":           "funnel",
-    "radar":            "radar",
-    # MCP has no native heatmap chart_type tag.
-    # pivot_table is the correct MCP type; we set color_scheme + conditional
-    # formatting in the config so Superset renders it as a visual heatmap.
+    # Pivot matrix (also renders "heatmap" requests)
+    "pivot_table":      "pivot_table",
     "heatmap":          "pivot_table",
-    "waterfall":        "waterfall",
-    "treemap":          "treemap",
-    "sunburst":         "sunburst",
+    # Big number
     "big_number":       "big_number",
     "big_number_total": "big_number",
+    # Combo — dual-axis time series (bars + line)
+    "mixed_timeseries": "mixed",
+    "combo":            "mixed",
+    # Not natively supported → nearest supported family
+    "box_plot":         "xy",
+    "boxplot":          "xy",
+    "funnel":           "xy",
+    "radar":            "xy",
+    "waterfall":        "xy",
+    "treemap":          "pie",
+    "sunburst":         "pie",
 }
 
 # Maps MCP xy config "kind" values from chart_type
@@ -97,11 +107,30 @@ _OP_NORMALISE: dict[str, str] = {
 }
 
 
-class ChartAgent:
-    """Creates Superset charts via MCP with self-correction on failures."""
+# Chart types the MCP's generate_chart can't render → created via Superset REST
+# (chart_agent._create_rest_chart). Maps our type → the real Superset viz_type.
+_REST_VIZ: dict[str, str] = {
+    "box_plot":  "box_plot",
+    "boxplot":   "box_plot",
+    "funnel":    "funnel",
+    "treemap":   "treemap_v2",
+    "sunburst":  "sunburst_v2",
+    "waterfall": "waterfall",
+    "gauge":     "gauge_chart",
+    "radar":     "radar",
+    "sankey":    "sankey_v2",
+    "histogram": "histogram",
+    "bubble":    "bubble_v2",
+    "real_heatmap": "heatmap_v2",
+}
 
-    def __init__(self, mcp: MCPClient):
+
+class ChartAgent:
+    """Creates Superset charts via MCP, with a REST fallback for unsupported types."""
+
+    def __init__(self, mcp: MCPClient, auth=None):
         self.mcp = mcp
+        self.auth = auth   # SupersetAuth — enables the REST fallback for box_plot etc.
 
     # ── Public API ────────────────────────────────────────────────────
 
@@ -111,7 +140,11 @@ class ChartAgent:
         results: list[ChartResult] = []
 
         for spec in charts:
-            chart_result = self._create_single_chart(spec, schema)
+            # Route MCP-unsupported viz types to the Superset REST fallback.
+            if self.auth and spec.chart_type.lower() in _REST_VIZ:
+                chart_result = self._create_rest_chart(spec, schema)
+            else:
+                chart_result = self._create_single_chart(spec, schema)
             results.append(chart_result)
 
             if chart_result.success:
@@ -129,6 +162,107 @@ class ChartAgent:
             "failed": total - succeeded,
             "total": total,
         })
+
+    # ── REST fallback (chart types the MCP can't render) ──────────────
+
+    def _create_rest_chart(self, spec: ChartSpec, schema: DatasetSchema) -> ChartResult:
+        """Create a chart via Superset REST for viz types generate_chart rejects."""
+        result = ChartResult(spec=spec, retries=1)
+        try:
+            viz, form_data, query_context = self._build_rest_chart(spec, schema)
+            cid = self.auth.create_chart(spec.name, viz, schema.id, form_data, query_context)
+            if cid:
+                result.chart_id = int(cid)
+                result.success = True
+            else:
+                result.error = self.auth.last_error or "REST chart create failed"
+        except Exception as e:  # never let a builder error abort the run
+            result.error = f"REST chart create error: {e}"
+        return result
+
+    def _build_rest_chart(self, spec: ChartSpec, schema: DatasetSchema):
+        """Build (viz_type, form_data, query_context) for a REST-only chart.
+        query_context is stored so the chart renders deterministically."""
+        viz = _REST_VIZ[spec.chart_type.lower()]
+        agg = (spec.aggregate or "COUNT").upper()
+        col = spec.metric_column or next(iter(schema.columns), "")
+        if agg == "COUNT" and (not col or col == "*"):
+            col = spec.dimension or next(iter(schema.columns), "")
+        label = spec.metric if (isinstance(spec.metric, str) and spec.metric) else f"{agg}({col})"
+        metric = {"expressionType": "SIMPLE", "column": {"column_name": col},
+                  "aggregate": agg, "label": label}
+        # primary + extra metrics (radar/bubble can use several)
+        metrics = [metric]
+        for m in (spec.extra_metrics or []):
+            if not isinstance(m, dict):
+                continue
+            c2 = m.get("metric_column") or m.get("name") or m.get("column")
+            if not c2:
+                continue
+            a2 = (m.get("aggregate") or agg).upper()
+            metrics.append({"expressionType": "SIMPLE", "column": {"column_name": c2},
+                            "aggregate": a2, "label": m.get("label") or f"{a2}({c2})"})
+        dims = [d for d in (spec.dimension, spec.series_column) if d] or \
+               [next(iter(schema.columns), "")]
+        primary_dim = spec.dimension or dims[0]
+        row_limit = spec.row_limit if (spec.row_limit and spec.row_limit > 0) else 100
+        ds = f"{schema.id}__table"
+
+        if viz == "box_plot":
+            form_data = {"viz_type": viz, "datasource": ds, "metrics": [metric],
+                         "groupby": [primary_dim], "whisker_options": "Tukey", "row_limit": 1000}
+            query = {"metrics": [metric], "columns": [primary_dim], "row_limit": 1000, "orderby": [],
+                     "post_processing": [{"operation": "boxplot", "options": {
+                         "whisker_type": "tukey", "groupby": [primary_dim], "metrics": [label]}}]}
+        elif viz == "sunburst_v2":
+            form_data = {"viz_type": viz, "datasource": ds, "columns": dims, "metric": metric, "row_limit": row_limit}
+            query = {"metrics": [metric], "columns": dims, "row_limit": row_limit, "orderby": [[label, False]]}
+        elif viz == "waterfall":
+            form_data = {"viz_type": viz, "datasource": ds, "metric": metric, "x_axis": primary_dim, "row_limit": row_limit}
+            query = {"metrics": [metric], "columns": [primary_dim], "row_limit": row_limit, "orderby": [[label, False]]}
+        elif viz == "gauge_chart":
+            gb = [primary_dim] if spec.dimension else []
+            form_data = {"viz_type": viz, "datasource": ds, "metric": metric, "groupby": gb, "row_limit": 10}
+            query = {"metrics": [metric], "columns": gb, "row_limit": 10, "orderby": [[label, False]]}
+        elif viz == "radar":
+            form_data = {"viz_type": viz, "datasource": ds, "metrics": metrics, "groupby": [primary_dim], "row_limit": row_limit}
+            query = {"metrics": metrics, "columns": [primary_dim], "row_limit": row_limit, "orderby": []}
+        elif viz == "sankey_v2":
+            source = primary_dim
+            target = spec.series_column or (dims[1] if len(dims) > 1 else primary_dim)
+            form_data = {"viz_type": viz, "datasource": ds, "source": source, "target": target, "metric": metric}
+            query = {"metrics": [metric], "columns": [source, target], "row_limit": 200, "orderby": [[label, False]]}
+        elif viz == "histogram":
+            # histogram bins a raw numeric column (no aggregate)
+            form_data = {"viz_type": viz, "datasource": ds, "column": col, "bins": 20, "row_limit": 10000}
+            query = {"columns": [col], "row_limit": 10000, "orderby": []}
+        elif viz == "bubble_v2":
+            count_m = {"expressionType": "SIMPLE", "column": {"column_name": col},
+                       "aggregate": "COUNT", "label": f"COUNT({col})"}
+            x_m = metrics[0]
+            y_m = metrics[1] if len(metrics) > 1 else count_m
+            size_m = metrics[2] if len(metrics) > 2 else metrics[0]
+            qm, seen = [], set()
+            for mm in (x_m, y_m, size_m):
+                if mm["label"] not in seen:
+                    qm.append(mm); seen.add(mm["label"])
+            form_data = {"viz_type": viz, "datasource": ds, "x": x_m, "y": y_m, "size": size_m,
+                         "entity": primary_dim, "row_limit": row_limit}
+            query = {"metrics": qm, "columns": [primary_dim], "row_limit": row_limit, "orderby": []}
+        elif viz == "heatmap_v2":
+            x_ax = primary_dim
+            grp = spec.series_column or (dims[1] if len(dims) > 1 else primary_dim)
+            form_data = {"viz_type": viz, "datasource": ds, "x_axis": x_ax, "groupby": [grp], "metric": metric}
+            query = {"metrics": [metric], "columns": [x_ax, grp], "row_limit": 5000, "orderby": []}
+        else:  # treemap_v2, funnel
+            form_data = {"viz_type": viz, "datasource": ds, "metric": metric, "groupby": dims, "row_limit": row_limit}
+            query = {"metrics": [metric], "columns": dims, "row_limit": row_limit, "orderby": [[label, False]]}
+
+        query_context = {"datasource": {"id": schema.id, "type": "table"}, "force": False,
+                         "result_format": "json", "result_type": "full",
+                         "form_data": form_data, "queries": [query]}
+        log.info("REST chart '%s' → viz=%s, dims=%s, metric=%s", spec.name, viz, dims, label)
+        return viz, form_data, query_context
 
     # ── Single-chart creation with retry loop ─────────────────────────
 
@@ -188,6 +322,12 @@ class ChartAgent:
 
     def _build_chart_params(self, spec: ChartSpec, schema: DatasetSchema) -> dict:
         """Build the full dict passed to mcp.generate_chart()."""
+        # COUNT(*): the MCP rejects metric name='*' ("An error occurred"). Count a
+        # real column instead — the grouped dimension/time column is always present,
+        # so COUNT(<that>) matches COUNT(*) row counts.
+        if (spec.aggregate or "").upper() == "COUNT" and (not spec.metric_column or spec.metric_column == "*"):
+            spec.metric_column = spec.dimension or spec.time_column or next(iter(schema.columns), "")
+
         config = self._build_config(spec, schema)
 
         # Inject filters into config (position depends on family)
@@ -221,10 +361,17 @@ class ChartAgent:
             "funnel":       self._funnel_config,
             "radar":        self._radar_config,
             "pivot_table":  self._pivot_table_config,   # heatmap routes here
+            "big_number":   self._big_number_config,
+            "mixed":        self._mixed_timeseries_config,  # combo: dual-axis time series
+            # NOTE: box_plot/funnel/radar/waterfall/treemap/sunburst are NOT
+            # supported by the MCP — _FAMILY_MAP remaps them to xy/pie above, so
+            # their legacy builders below are unreachable.
             "waterfall":    self._waterfall_config,
             "treemap":      self._treemap_config,
             "sunburst":     self._sunburst_config,
-            "big_number":   self._big_number_config,
+            "box_plot":     self._box_plot_config,
+            "funnel":       self._funnel_config,
+            "radar":        self._radar_config,
         }
 
         builder = dispatch.get(family, self._xy_config)
@@ -254,17 +401,30 @@ class ChartAgent:
 
         is_stacked = spec.stack or ct_lower in ("stacked_bar", "stacked_area")
 
-        # Primary metric
-        y_metric = {
+        # Primary metric + any extra_metrics (multi-metric charts, e.g. inflow +
+        # outflow rendered as two series on one xy chart).
+        y_metrics = [{
             "name": spec.metric_column,
             "aggregate": spec.aggregate.upper(),
             "label": spec.metric,
-        }
+        }]
+        for m in (spec.extra_metrics or []):
+            if not isinstance(m, dict):
+                continue
+            col = m.get("metric_column") or m.get("name") or m.get("column")
+            if not col:
+                continue
+            m_agg = (m.get("aggregate") or spec.aggregate).upper()
+            y_metrics.append({
+                "name": col,
+                "aggregate": m_agg,
+                "label": m.get("label") or f"{m_agg} {col}",
+            })
 
         config: dict = {
             "chart_type": "xy",
             "kind": kind,
-            "y": [y_metric],
+            "y": y_metrics,
         }
 
         if is_stacked:
@@ -311,6 +471,43 @@ class ChartAgent:
             config["row_limit"] = spec.row_limit
             log.info("XY chart '%s': row_limit=%d", spec.name, spec.row_limit)
 
+        return config
+
+    # ── Combo (mixed_timeseries) ──────────────────────────────────────
+
+    def _mixed_timeseries_config(self, spec: ChartSpec, schema: DatasetSchema) -> dict:
+        """
+        Dual-axis time series: the primary metric as bars and the first extra
+        metric as a line on a secondary axis — e.g. "transaction count and
+        average amount over time". Falls back to bars-only if there's no second
+        metric.
+        """
+        x_col = spec.time_column or spec.dimension or ""
+        col_type = schema.columns.get(x_col, "")
+        config: dict = {
+            "chart_type": "mixed_timeseries",
+            "x": {"name": x_col, "dtype": col_type},
+            "y": [{
+                "name": spec.metric_column,
+                "aggregate": spec.aggregate.upper(),
+                "label": spec.metric if isinstance(spec.metric, str) else spec.metric_column,
+            }],
+            "primary_kind": "bar",
+            "secondary_kind": "line",
+        }
+        if any(t in col_type.upper() for t in ("TIMESTAMP", "DATETIME", "DATE", "TIME")):
+            config["time_grain"] = "P1D"
+
+        extra = spec.extra_metrics or []
+        if extra and isinstance(extra[0], dict):
+            m = extra[0]
+            col = m.get("metric_column") or m.get("name") or m.get("column")
+            if col:
+                agg = (m.get("aggregate") or spec.aggregate).upper()
+                config["y_secondary"] = [{"name": col, "aggregate": agg,
+                                          "label": m.get("label") or col}]
+        log.info("Mixed/combo chart '%s': x=%s, secondary=%s",
+                 spec.name, x_col, bool(config.get("y_secondary")))
         return config
 
     # ── Pie / Donut ───────────────────────────────────────────────────
@@ -399,26 +596,22 @@ class ChartAgent:
 
     # ── Pivot Table / Heatmap ─────────────────────────────────────────
     #
-    # MCP's generate_chart does NOT accept chart_type "heatmap" — the only
-    # valid MCP tags are: xy, table, pie, pivot_table, mixed_timeseries.
+    # MCP's generate_chart does NOT accept chart_type "heatmap" — the valid tags
+    # are: xy, table, pie, pivot_table, mixed_timeseries. We render a "heatmap" as
+    # a pivot_table (rows × columns matrix of the metric).
     #
-    # We use chart_type "pivot_table" and enable Superset's built-in
-    # conditional-formatting / color-scale options so the pivot renders
-    # as a visual heatmap (cell color ∝ metric value).
-    #
-    # Config shape accepted by Superset MCP pivot_table:
-    #   rows     – list of {name} dicts for the ROW axis  (e.g. bank_name)
-    #   columns  – list of {name} dicts for the COL axis  (e.g. channel_type)
-    #   metrics  – list of metric dicts for the cell value
-    #   conditional_formatting – list of rules that color cells by value range
+    # IMPORTANT: the MCP pivot_table config accepts ONLY rows / columns / metrics /
+    # row_limit / show_*_totals / *_format / transpose. It does NOT accept
+    # color_scheme or conditional_formatting — sending those fails the chart with a
+    # generic "An error occurred" (verified live). So we keep the config minimal.
 
     @staticmethod
     def _pivot_table_config(spec: ChartSpec, schema: DatasetSchema) -> dict:
         """
-        Builds a pivot_table config that Superset renders as a heatmap.
-        - rows    = spec.dimension        (e.g. bank_name)
-        - columns = spec.series_column    (e.g. channel_type); falls back to 'channel_type'
-        - cells colored by metric value via conditional_formatting
+        Builds a pivot_table config (used for heatmap requests too).
+        - rows    = spec.dimension     (e.g. bank_name)
+        - columns = spec.series_column (e.g. channel_type); falls back to 'channel_type'
+        - metrics = the cell value
         """
         row_col = spec.dimension or "bank_name"
         col_col = spec.series_column or "channel_type"
@@ -434,16 +627,8 @@ class ChartAgent:
                     "label": spec.metric,
                 }
             ],
-            # Color cells like a heatmap: low value = white/light, high = dark blue
-            "color_scheme": "blue_white_yellow",
-            "conditional_formatting": [
-                {
-                    "operator": "between",
-                    "targetValue": 0,
-                    "column": spec.metric,
-                    "colorScheme": "RdYlGn",
-                }
-            ],
+            "show_row_totals": True,
+            "show_column_totals": True,
         }
 
         if spec.row_limit and isinstance(spec.row_limit, int) and spec.row_limit > 0:

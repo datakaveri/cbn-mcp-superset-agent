@@ -1,0 +1,494 @@
+:root {
+  /* Brand — aligned to the CBN crest (green primary, gold accents) */
+  --green: #15873d;
+  --green-strong: #0f6c30;
+  --green-soft: #e7f4ec;
+  --green-ring: rgba(21, 135, 61, 0.35);
+  --gold: #b9820a;
+  --gold-soft: #faf1d7;
+  --red: #c0392b;
+  --red-soft: #fbeae8;
+  --amber: #b7791f;
+
+  /* Light surfaces */
+  --bg: #f4f7f4;
+  --surface: #ffffff;
+  --surface-2: #eef2ee;
+  --border: #dde6df;
+  --border-strong: #c8d4cb;
+
+  /* Text */
+  --text: #15241b;
+  --text-mid: #4c5b52;
+  --text-dim: #7e8c83;
+
+  --font: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --shadow: 0 1px 2px rgba(16, 40, 24, 0.04), 0 4px 16px rgba(16, 40, 24, 0.06);
+
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* ── Overlay (boot / error) ─────────────────────────────────────── */
+.overlay {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--text-mid);
+}
+.overlay-error {
+  color: var(--red);
+  max-width: 460px;
+  text-align: center;
+}
+
+/* ── Spinner ────────────────────────────────────────────────────── */
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--green-ring);
+  border-top-color: var(--green);
+  border-radius: 50%;
+  display: inline-block;
+  animation: spin 0.7s linear infinite;
+}
+.spinner.large {
+  width: 28px;
+  height: 28px;
+  border-width: 3px;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── App shell ──────────────────────────────────────────────────── */
+.app {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+.brand-logo {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+  display: block;
+}
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+.brand-title {
+  font-weight: 700;
+  color: var(--green-strong);
+  letter-spacing: -0.01em;
+}
+.brand-sub {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.user-area {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.user-name {
+  font-size: 12px;
+  color: var(--text-mid);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.logout-btn {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text-mid);
+  padding: 6px 12px;
+  border-radius: 7px;
+  font-size: 12px;
+}
+.logout-btn:hover {
+  border-color: var(--green);
+  color: var(--green-strong);
+}
+
+/* ── Chat area ──────────────────────────────────────────────────── */
+.chat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.chat-scroll {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+.messages {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 24px 20px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* ── Welcome / empty state ──────────────────────────────────────── */
+.welcome {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 12vh 20px 0;
+  text-align: center;
+}
+.welcome-logo {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+}
+.welcome h1 {
+  font-size: 26px;
+  margin: 16px 0 8px;
+  letter-spacing: -0.02em;
+}
+.welcome p {
+  color: var(--text-mid);
+  margin: 0 0 22px;
+}
+.welcome-examples {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: stretch;
+}
+
+/* ── Messages ───────────────────────────────────────────────────── */
+.msg {
+  display: flex;
+  gap: 12px;
+}
+.msg.user {
+  justify-content: flex-end;
+}
+.msg.user .bubble {
+  background: var(--green);
+  color: #fff;
+  padding: 10px 14px;
+  border-radius: 14px 14px 4px 14px;
+  max-width: 80%;
+  box-shadow: var(--shadow);
+}
+.msg.assistant .avatar {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--green-soft);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.msg.assistant .avatar img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+.msg.assistant .bubble {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px 14px 14px 14px;
+  padding: 12px 14px;
+  box-shadow: var(--shadow);
+}
+
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.status-line.ok {
+  color: var(--green-strong);
+}
+.status-line.warn {
+  color: var(--amber);
+}
+.status-line .meta {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+/* ── Phase strip ────────────────────────────────────────────────── */
+.phase-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.phase-chip {
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  background: var(--surface-2);
+}
+.phase-chip.running {
+  border-color: var(--gold);
+  color: var(--gold);
+  background: var(--gold-soft);
+}
+.phase-chip.done {
+  border-color: transparent;
+  color: var(--green-strong);
+  background: var(--green-soft);
+}
+.phase-chip.error {
+  border-color: transparent;
+  color: var(--red);
+  background: var(--red-soft);
+}
+
+/* ── Logs ───────────────────────────────────────────────────────── */
+.log-block {
+  margin-top: 10px;
+}
+.log-block summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-dim);
+  user-select: none;
+}
+.log-list {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.log-line {
+  display: grid;
+  grid-template-columns: 64px 14px 1fr;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-mid);
+}
+.log-line .log-ts {
+  color: var(--text-dim);
+}
+.log-line .log-icon {
+  color: var(--text-dim);
+}
+.log-line.success .log-icon {
+  color: var(--green);
+}
+.log-line.warning {
+  color: var(--amber);
+}
+.log-line.error {
+  color: var(--red);
+}
+
+/* ── Embed ──────────────────────────────────────────────────────── */
+.embed-card {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+.embed-mount {
+  width: 100%;
+  height: 70vh;
+  min-height: 420px;
+}
+.embed-mount iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+.embed-error {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--red);
+  border-radius: 10px;
+  background: var(--red-soft);
+  color: var(--red);
+  font-size: 13px;
+}
+
+/* ── Composer ───────────────────────────────────────────────────── */
+.composer {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  padding: 12px 20px 16px;
+}
+.examples,
+.welcome-examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.examples {
+  max-width: 820px;
+  margin: 0 auto 10px;
+}
+.ex-chip {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  color: var(--text-mid);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  text-align: left;
+}
+.ex-chip:hover {
+  border-color: var(--green);
+  color: var(--green-strong);
+  background: var(--green-soft);
+}
+.ex-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ── Follow-up suggestions (under a finished assistant message) ──── */
+.followups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+.followups-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-right: 2px;
+}
+.composer-row {
+  max-width: 820px;
+  margin: 0 auto;
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+.composer-input {
+  flex: 1;
+  resize: none;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 15px;
+  line-height: 1.5;
+  max-height: 160px;
+  font-family: inherit;
+}
+.composer-input:focus {
+  outline: none;
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px var(--green-ring);
+}
+.send-btn {
+  background: var(--green);
+  color: #fff;
+  border: 0;
+  border-radius: 10px;
+  padding: 12px 20px;
+  font-weight: 650;
+  min-height: 46px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.send-btn:hover:not(:disabled) {
+  background: var(--green-strong);
+}
+.send-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ── Mobile ─────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .app-header {
+    padding: 10px 14px;
+  }
+  .brand-sub {
+    display: none;
+  }
+  .messages,
+  .composer {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .msg.user .bubble {
+    max-width: 88%;
+  }
+  /* iOS: 16px input prevents focus auto-zoom */
+  .composer-input {
+    font-size: 16px;
+  }
+  .embed-mount {
+    height: 72dvh;
+    min-height: 360px;
+  }
+}

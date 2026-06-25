@@ -2,8 +2,9 @@
 Pipeline — Full Phase 0→6 execution.
 Sequences the agents, handles the self-correction loop, and emits progress callbacks.
 
-Also exposes a Flask web server (run_web_server()) that serves index.html and a
-POST /run SSE endpoint so the browser UI can stream live pipeline progress.
+Also exposes a Flask web server (run_web_server()) that serves the built React
+app (frontend/dist) and a POST /run SSE endpoint so the browser UI can stream
+live pipeline progress.
 
 Usage:
     python pipeline.py                   # start the web UI on :5001
@@ -12,6 +13,7 @@ Usage:
 
 import json
 import logging
+import mimetypes
 import os
 import queue
 import sys
@@ -32,6 +34,8 @@ from agents.dataset_agent import DatasetAgent
 from agents.sql_agent import SQLAgent
 from agents.chart_agent import ChartAgent
 from agents.dashboard_agent import DashboardAgent
+from agents.profiler import profile_dataset
+from agents import suggester
 from keycloak_auth import require_auth
 from config import (
     MAX_PLAN_RETRIES, APP_BASE_PATH, SUPERSET_LOGIN_ENABLED,
@@ -65,7 +69,8 @@ class Pipeline:
         self.orchestrator = Orchestrator(self.llm)
         self.dataset_agent = DatasetAgent(self.mcp)
         self.sql_agent = SQLAgent(self.mcp)
-        self.chart_agent = ChartAgent(self.mcp)
+        # auth enables the REST fallback for chart types the MCP can't render.
+        self.chart_agent = ChartAgent(self.mcp, self.auth)
         self.dashboard_agent = DashboardAgent(self.mcp)
 
     def _emit(self, phase: Phase, level: str, message: str):
@@ -115,9 +120,11 @@ class Pipeline:
 
     # ── Full Pipeline Run ────────────────────────────────────────────
 
-    def run(self, user_query: str) -> PipelineReport:
+    def run(self, user_query: str, context: Optional[dict] = None) -> PipelineReport:
         """
         Execute the full pipeline: Phase 0 → Phase 6.
+        `context` (optional) carries the active dashboard for conversational
+        follow-ups: {dashboard_id, dashboard_uuid, dataset, chart_names}.
         Returns a PipelineReport with the final result.
         """
         start = time.time()
@@ -142,8 +149,40 @@ class Pipeline:
         preview = ", ".join(c.table_name for c in catalog[:8]) + ("…" if len(catalog) > 8 else "")
         self._emit(Phase.PLAN_GENERATION, "info", f"{len(catalog)} datasets available: {preview}")
 
+        # Intent: brand-new dashboard vs follow-up (add to the active one)
+        intent = self.orchestrator.classify_intent(user_query, context)
+        if intent == "followup":
+            self._emit(Phase.PLAN_GENERATION, "info",
+                       "Follow-up detected — will add charts to the current dashboard")
+
+        # Shortlist candidate datasets, then enrich + PROFILE them so the planner
+        # chooses good dimensions/metrics/charts instead of a generic COUNT(*).
+        shortlist = self.orchestrator.shortlist_datasets(user_query, catalog)
+        candidate_names = shortlist.data if shortlist.success else []
+        if intent == "followup" and context and context.get("dataset") \
+                and context["dataset"] not in candidate_names:
+            candidate_names = [context["dataset"]] + candidate_names
+        self._emit(Phase.PLAN_GENERATION, "info",
+                   f"Candidate datasets: {candidate_names or '(none — using catalog default)'}")
+
+        candidates: list[DatasetSchema] = []
+        profiles: dict = {}
+        for name in (candidate_names or [])[:3]:
+            cand = self.dataset_agent.select([name], catalog)
+            if not cand:
+                continue
+            cand = self.dataset_agent.enrich(cand)
+            candidates.append(cand)
+            self._emit(Phase.DATASET_DISCOVERY, "info", f"Profiling '{cand.table_name}'…")
+            try:
+                profiles[cand.table_name] = profile_dataset(cand, self.mcp)
+            except Exception as e:  # profiling is best-effort
+                log.warning("Profile failed for %s: %s", cand.table_name, e)
+        if not candidates:
+            candidates = [self.dataset_agent.enrich(catalog[0])]
+
         self._emit(Phase.PLAN_GENERATION, "info", f"Generating plan from: '{user_query[:80]}...'")
-        plan_result = self.orchestrator.generate_plan(user_query, catalog)
+        plan_result = self.orchestrator.generate_plan(user_query, candidates, profiles)
         if not plan_result.success:
             self._emit(Phase.PLAN_GENERATION, "error", f"Plan failed: {plan_result.error}")
             report = PipelineReport()
@@ -157,92 +196,92 @@ class Pipeline:
             self._emit(Phase.PLAN_GENERATION, "info",
                        f"  Chart {i+1}: {c.name} ({c.chart_type}) — {c.metric} by {c.dimension}")
 
-        # ── Phase 2: Dataset Discovery (resolve the dataset the LLM chose) ──
-        self._emit(Phase.DATASET_DISCOVERY, "info", f"Selecting dataset: {plan.datasets}")
-        schema = self.dataset_agent.select(plan.datasets, catalog)
-        if schema is None:
-            schema = catalog[0]
-            self._emit(Phase.DATASET_DISCOVERY, "warning",
-                       f"Planned dataset {plan.datasets} not found — falling back to '{schema.table_name}'")
-            plan.datasets = [schema.table_name]
-
-        # Catalog is names-only; load the chosen dataset's columns + database_id now.
-        schema = self.dataset_agent.enrich(schema)
-
+        # ── Phase 2: resolve the chosen dataset (already enriched + profiled) ──
+        schema = next((c for c in candidates if c.table_name in plan.datasets), candidates[0])
+        plan.datasets = [schema.table_name]
+        profile = profiles.get(schema.table_name)
+        profile_text = profile.render() if profile else ""
         self._emit(Phase.DATASET_DISCOVERY, "success",
                    f"Using '{schema.name}' (id={schema.id}, db_id={schema.database_id}, "
                    f"{len(schema.columns)} columns)")
-        self._emit(Phase.DATASET_DISCOVERY, "info",
-                   f"  Columns: {', '.join(list(schema.columns.keys())[:12])}...")
 
-        # ── Phase 1b: Plan Refinement with real schema ──
-        self._emit(Phase.PLAN_REFINEMENT, "info", "Refining plan with actual column schema...")
-        plan = self._refine_plan_if_needed(user_query, plan, schema)
+        # ── Phases 1b→4 on the chosen dataset (refine → validate → keep → create) ──
+        plan, sql_previews, chart_results = self._validate_keep_create(
+            user_query, plan, schema, profile_text)
 
-        # ── Phase 3: SQL Validation ──
-        self._emit(Phase.SQL_VALIDATION, "info", "Running SQL probe queries...")
-        sql_result = self.sql_agent.validate_charts(plan.charts, schema)
-        sql_previews = sql_result.data or {}
+        # ── Dataset fallback (creation-aware) ──
+        # If the chosen dataset produced NO rendered chart (bad column types, a
+        # broken virtual-dataset SQL, or a create-time error), re-run end-to-end on
+        # the other shortlisted candidates — a sibling dataset often works cleanly.
+        if not any(c.success for c in chart_results) and len(candidates) > 1:
+            for alt in candidates:
+                if alt.table_name == schema.table_name:
+                    continue
+                self._emit(Phase.PLAN_GENERATION, "warning",
+                           f"No chart rendered on '{schema.table_name}' — trying '{alt.table_name}'…")
+                alt_res = self.orchestrator.generate_plan(user_query, [alt], profiles)
+                if not alt_res.success:
+                    continue
+                alt_prof = profiles.get(alt.table_name)
+                alt_text = alt_prof.render() if alt_prof else ""
+                a_plan, a_prev, a_results = self._validate_keep_create(
+                    user_query, alt_res.data, alt, alt_text)
+                if any(c.success for c in a_results):
+                    plan, schema, sql_previews, chart_results, profile_text = \
+                        a_plan, alt, a_prev, a_results, alt_text
+                    self._emit(Phase.DATASET_DISCOVERY, "success",
+                               f"Recovered on dataset '{alt.table_name}'")
+                    break
 
-        if not sql_result.success:
-            self._emit(Phase.SQL_VALIDATION, "warning", "Some probes failed — attempting correction...")
-            plan_retry = self.orchestrator.refine_plan(user_query, plan, schema, sql_previews)
-            if plan_retry.success:
-                plan = plan_retry.data
-                self._emit(Phase.SQL_VALIDATION, "info", "Re-validating corrected plan...")
-                sql_result = self.sql_agent.validate_charts(plan.charts, schema)
-                sql_previews = sql_result.data or {}
-
-        for chart_name, preview in sql_previews.items():
-            if isinstance(preview, dict) and preview.get("valid"):
-                rows = preview.get("preview", [])
-                count = len(rows) if isinstance(rows, list) else 0
-                self._emit(Phase.SQL_VALIDATION, "success", f"  '{chart_name}': {count} preview rows")
-            elif isinstance(preview, dict):
-                self._emit(Phase.SQL_VALIDATION, "warning",
-                           f"  '{chart_name}': {preview.get('error', 'unknown error')}")
-
-        # ── Phase 4: Chart Creation ──
-        self._emit(Phase.CHART_CREATION, "info", f"Creating {len(plan.charts)} charts...")
-        chart_result = self.chart_agent.create_charts(plan.charts, schema)
-        chart_results = chart_result.data or []
-
-        for cr in chart_results:
-            if cr.success:
-                self._emit(Phase.CHART_CREATION, "success",
-                           f"  '{cr.spec.name}' → chart_id={cr.chart_id}")
+        # ── Phase 5: Dashboard Assembly (new dashboard, or append to current) ──
+        is_followup = intent == "followup" and bool(context and context.get("dashboard_id"))
+        if is_followup:
+            self._emit(Phase.DASHBOARD_ASSEMBLY, "info",
+                       f"Adding {len(chart_results)} chart(s) to '{context.get('title', 'the current dashboard')}'")
+            dash_result = self.dashboard_agent.add_charts(context["dashboard_id"], chart_results)
+            if dash_result.success:
+                # Reuse the embed uuid the client already has (dashboard is already
+                # registered for embedding); the inline preview just re-renders.
+                dash_result.data["uuid"] = context.get("dashboard_uuid") or dash_result.data.get("uuid")
+                self._emit(Phase.DASHBOARD_ASSEMBLY, "success",
+                           f"Added {dash_result.data.get('chart_count', 0)} chart(s) to the dashboard")
             else:
-                self._emit(Phase.CHART_CREATION, "error",
-                           f"  '{cr.spec.name}' failed: {cr.error}")
-
-        # ── Phase 5: Dashboard Assembly ──
-        self._emit(Phase.DASHBOARD_ASSEMBLY, "info",
-                   f"Assembling dashboard: '{plan.dashboard_title}'")
-        dash_result = self.dashboard_agent.create_dashboard(plan.dashboard_title, chart_results)
-
-        if dash_result.success:
-            url = dash_result.data.get("url", "")
-            self._emit(Phase.DASHBOARD_ASSEMBLY, "success", f"Dashboard live → {url}")
-            # Register the dashboard for embedding so the inline guest-token preview
-            # (/embedded/<uuid>) resolves. Uses the returned embed uuid for the SDK.
-            if SUPERSET_EMBED_REGISTER:
-                embed_uuid = self.auth.register_embedding(
-                    dash_result.data.get("dashboard_id"), SUPERSET_EMBED_ALLOWED_DOMAINS,
-                )
-                if embed_uuid:
-                    dash_result.data["uuid"] = embed_uuid
-                    self._emit(Phase.DASHBOARD_ASSEMBLY, "info", "Registered dashboard for inline embedding")
-                else:
-                    self._emit(Phase.DASHBOARD_ASSEMBLY, "warning",
-                               "Embed registration failed — inline preview may not load (check Superset creds)")
+                self._emit(Phase.DASHBOARD_ASSEMBLY, "error", f"Could not update dashboard: {dash_result.error}")
         else:
-            self._emit(Phase.DASHBOARD_ASSEMBLY, "error", f"Dashboard failed: {dash_result.error}")
+            self._emit(Phase.DASHBOARD_ASSEMBLY, "info",
+                       f"Assembling dashboard: '{plan.dashboard_title}'")
+            dash_result = self.dashboard_agent.create_dashboard(plan.dashboard_title, chart_results)
+            if dash_result.success:
+                url = dash_result.data.get("url", "")
+                self._emit(Phase.DASHBOARD_ASSEMBLY, "success", f"Dashboard live → {url}")
+                # Register for embedding so the inline guest-token preview resolves.
+                if SUPERSET_EMBED_REGISTER:
+                    embed_uuid = self.auth.register_embedding(
+                        dash_result.data.get("dashboard_id"), SUPERSET_EMBED_ALLOWED_DOMAINS,
+                    )
+                    if embed_uuid:
+                        dash_result.data["uuid"] = embed_uuid
+                        self._emit(Phase.DASHBOARD_ASSEMBLY, "info", "Registered dashboard for inline embedding")
+                    else:
+                        self._emit(Phase.DASHBOARD_ASSEMBLY, "warning",
+                                   "Embed registration failed — inline preview may not load (check Superset creds)")
+            else:
+                self._emit(Phase.DASHBOARD_ASSEMBLY, "error", f"Dashboard failed: {dash_result.error}")
 
         # ── Phase 6: Result Reporting ──
         elapsed = round(time.time() - start, 1)
         self._emit(Phase.RESULT_REPORTING, "info", f"Pipeline complete in {elapsed}s")
 
         report = self.orchestrator.build_report(dash_result, chart_results, sql_previews)
+        report.dataset = schema.table_name
+        # Contextual follow-up suggestions (best-effort) once a dashboard exists.
+        if report.success and report.dashboard_id:
+            existing = [c.spec.name for c in chart_results if c.success]
+            try:
+                report.followups = suggester.followup_suggestions(
+                    user_query, schema.table_name, profile_text, existing, self.llm)
+            except Exception as e:
+                log.info("Followup suggestions failed: %s", e)
         charts_ok = sum(1 for c in chart_results if c.success)
         self._emit(
             Phase.RESULT_REPORTING,
@@ -255,8 +294,51 @@ class Pipeline:
 
     # ── Internal helpers ─────────────────────────────────────────────
 
+    def _validate_keep_create(self, user_query, plan, schema, profile_text):
+        """
+        Refine → SQL-validate (with one correction pass) → keep only working charts
+        → create them, for a single dataset. Returns (plan, sql_previews,
+        chart_results). Used for the primary dataset and each fallback candidate.
+        """
+        self._emit(Phase.PLAN_REFINEMENT, "info", "Validating plan columns...")
+        plan = self._refine_plan_if_needed(user_query, plan, schema, profile_text)
+
+        self._emit(Phase.SQL_VALIDATION, "info", "Running SQL probe queries...")
+        sql_result = self.sql_agent.validate_charts(plan.charts, schema)
+        sql_previews = sql_result.data or {}
+        if not sql_result.success:
+            self._emit(Phase.SQL_VALIDATION, "warning", "Some probes failed — attempting correction...")
+            retry = self.orchestrator.refine_plan(user_query, plan, schema, sql_previews, profile_text)
+            if retry.success:
+                plan = retry.data
+                self._emit(Phase.SQL_VALIDATION, "info", "Re-validating corrected plan...")
+                sql_previews = self.sql_agent.validate_charts(plan.charts, schema).data or {}
+
+        for chart_name, preview in sql_previews.items():
+            if isinstance(preview, dict) and preview.get("valid"):
+                rows = preview.get("preview", [])
+                count = len(rows) if isinstance(rows, list) else 0
+                self._emit(Phase.SQL_VALIDATION, "success", f"  '{chart_name}': {count} preview rows")
+            elif isinstance(preview, dict):
+                self._emit(Phase.SQL_VALIDATION, "warning",
+                           f"  '{chart_name}': {preview.get('error', 'unknown error')}")
+
+        plan.charts = self._keep_working_charts(plan.charts, schema, sql_previews)
+        if not plan.charts:
+            return plan, sql_previews, []
+
+        self._emit(Phase.CHART_CREATION, "info", f"Creating {len(plan.charts)} charts...")
+        chart_results = self.chart_agent.create_charts(plan.charts, schema).data or []
+        for cr in chart_results:
+            if cr.success:
+                self._emit(Phase.CHART_CREATION, "success", f"  '{cr.spec.name}' → chart_id={cr.chart_id}")
+            else:
+                self._emit(Phase.CHART_CREATION, "error", f"  '{cr.spec.name}' failed: {cr.error}")
+        return plan, sql_previews, chart_results
+
     def _refine_plan_if_needed(
-        self, user_query: str, plan: PipelinePlan, schema: DatasetSchema
+        self, user_query: str, plan: PipelinePlan, schema: DatasetSchema,
+        profile_text: str = "",
     ) -> PipelinePlan:
         """Check if plan uses valid columns; refine via LLM if not."""
         valid_cols = set(schema.columns.keys())
@@ -280,6 +362,7 @@ class Pipeline:
         refined = self.orchestrator.refine_plan(
             user_query, plan, schema,
             {"invalid_columns": list(invalid), "valid_columns": list(valid_cols)},
+            profile_text,
         )
 
         if refined.success:
@@ -289,6 +372,76 @@ class Pipeline:
             self._emit(Phase.PLAN_REFINEMENT, "warning",
                        f"Refinement failed, using original plan: {refined.error}")
             return plan
+
+    # Numeric aggregates the Superset MCP rejects on "non-numeric" columns — which
+    # it considers to include ClickHouse Nullable(...) AND Bool AND text types.
+    # COUNT / COUNT_DISTINCT are fine on any type. Verified live: there is NO
+    # config-level workaround (sql_expression errors in the xy builder; a dtype hint
+    # is ignored), so such a chart always fails at creation — drop it up front.
+    _NUMERIC_AGGS = {"SUM", "AVG", "MIN", "MAX", "STDDEV", "VAR", "MEDIAN", "PERCENTILE"}
+    _NUMERIC_TYPES = ("INT", "FLOAT", "DOUBLE", "DECIMAL", "NUMERIC", "REAL")
+
+    @classmethod
+    def _mcp_can_aggregate(cls, ctype: str) -> bool:
+        """True if the MCP will accept SUM/AVG/MIN/MAX on this column type. It
+        rejects Nullable(...), Bool, and text types as 'non-numeric'."""
+        t = (ctype or "").upper()
+        if "NULLABLE" in t or "BOOL" in t:
+            return False
+        return any(h in t for h in cls._NUMERIC_TYPES)
+
+    def _keep_working_charts(self, charts, schema, sql_previews):
+        """
+        Filter a chart list down to the ones that will actually render:
+          1. Hard rule: a numeric aggregate (SUM/AVG/…) on a column the MCP treats
+             as non-numeric (Nullable / Bool / text) — drop unconditionally.
+          2. Probe rule: a chart whose probe hit a real DB error will fail at
+             creation too → drop it (even if that empties the set; the dataset
+             fallback handles recovery). A "0 rows" probe is a possible
+             false-negative (empty window) → keep only if nothing else is valid.
+        Emits a warning per dropped chart and a summary line.
+        """
+        # (1) numeric aggregate on a non-aggregatable column → always fails
+        keep = []
+        for c in charts:
+            agg = (getattr(c, "aggregate", "") or "").upper()
+            # metric_column is normally a str; be list-safe (multi-metric plans).
+            raw_col = getattr(c, "metric_column", "") or ""
+            cols = raw_col if isinstance(raw_col, list) else [raw_col]
+            bad = next((str(col) for col in cols
+                        if agg in self._NUMERIC_AGGS
+                        and not self._mcp_can_aggregate(schema.columns.get(str(col), ""))), None)
+            if bad:
+                self._emit(
+                    Phase.SQL_VALIDATION, "warning",
+                    f"  Dropping '{c.name}' — {agg} of non-numeric column '{bad}' "
+                    f"(type {schema.columns.get(bad, '?')}) is rejected by Superset",
+                )
+            else:
+                keep.append(c)
+        charts = keep
+
+        # (2) probe results: separate valid / hard-fail (real error) / soft-fail (0 rows)
+        valid = [c for c in charts if (sql_previews.get(c.name) or {}).get("valid")]
+        soft = []
+        for c in charts:
+            if c in valid:
+                continue
+            err = (sql_previews.get(c.name) or {}).get("error") or "failed validation"
+            if "0 rows" in err.lower():
+                soft.append(c)
+            else:
+                self._emit(Phase.SQL_VALIDATION, "warning",
+                           f"  Dropping '{c.name}' — query failed, won't render ({err[:140]})")
+        charts = valid + (soft if not valid else [])  # keep 0-row charts only if nothing else
+
+        if charts:
+            self._emit(Phase.SQL_VALIDATION, "success",
+                       f"Keeping {len(charts)} working chart(s)")
+        else:
+            self._emit(Phase.SQL_VALIDATION, "warning",
+                       "No charts can render on this dataset — see warnings above")
+        return charts
 
     def close(self):
         """Clean up resources."""
@@ -307,7 +460,7 @@ def _sse_event(data: dict) -> str:
 def run_web_server(port: int = 5001, host: str = "0.0.0.0"):
     """
     Start a Flask server that:
-      GET  /          → serves index.html (must be next to this file)
+      GET  /          → serves the built React app (frontend/dist)
       POST /run       → SSE stream of pipeline progress events
       GET  /health    → quick JSON health probe for the UI
     """
@@ -318,9 +471,12 @@ def run_web_server(port: int = 5001, host: str = "0.0.0.0"):
         print("Flask and flask-cors are required. Install with: pip install flask flask-cors")
         sys.exit(1)
 
-    # Locate index.html next to this file
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    app = Flask(__name__, static_folder=base_dir)
+    # The built React app (frontend/dist) lives one level up from agent/ and is
+    # the UI we serve (built by `pnpm build` / the Docker image).
+    frontend_dist = os.path.join(os.path.dirname(base_dir), "frontend", "dist")
+    mimetypes.add_type("application/manifest+json", ".webmanifest")
+    app = Flask(__name__, static_folder=None)  # we serve static assets ourselves
     CORS(app)  # Allow cross-origin requests from any port (browser opening index.html elsewhere)
 
     # Sub-path support: when deployed behind a proxy under e.g. /chatbot, strip
@@ -343,15 +499,16 @@ def run_web_server(port: int = 5001, host: str = "0.0.0.0"):
 
     @app.route("/")
     def index():
-        # When served under a sub-path (e.g. /chatbot behind a proxy), inject a
-        # <base> tag so the browser resolves auth-config/run/assets under the
-        # prefix. APP_BASE_PATH wins; otherwise honor the proxy's X-Forwarded-Prefix.
-        prefix = APP_BASE_PATH or request.headers.get("X-Forwarded-Prefix", "").rstrip("/")
-        with open(os.path.join(base_dir, "index.html"), encoding="utf-8") as f:
-            html = f.read()
-        if prefix:
-            html = html.replace("<head>", f'<head>\n  <base href="{prefix}/" />', 1)
-        return Response(html, mimetype="text/html")
+        # Serve the built React app. Its asset/API URLs are baked with the correct
+        # base (VITE_BASE), so no <base> injection is needed.
+        dist_index = os.path.join(frontend_dist, "index.html")
+        if os.path.exists(dist_index):
+            return send_from_directory(frontend_dist, "index.html")
+        return Response(
+            "Frontend not built — run `pnpm --dir frontend build` "
+            "(the Docker image does this automatically).",
+            status=503, mimetype="text/plain",
+        )
 
     @app.route("/health")
     def health():
@@ -373,6 +530,25 @@ def run_web_server(port: int = 5001, host: str = "0.0.0.0"):
             },
         }
 
+    @app.route("/suggestions")
+    @require_auth
+    def suggestions():
+        # Dataset-grounded starter queries for the welcome screen (LLM, cached).
+        pipeline = Pipeline()
+        try:
+            pipeline.mcp.initialize()
+            catalog = pipeline.dataset_agent.build_catalog()
+            items = (
+                suggester.starter_suggestions(catalog.data, pipeline.dataset_agent, pipeline.llm)
+                if catalog.success else suggester.FALLBACK_STARTERS
+            )
+            return {"suggestions": items}
+        except Exception as exc:
+            log.warning("Suggestions failed: %s", exc)
+            return {"suggestions": suggester.FALLBACK_STARTERS}
+        finally:
+            pipeline.close()
+
     # Guest token for the inline embedded-dashboard preview. The agent mints it
     # via Superset (admin creds) so the viewer needn't own the dashboard. Gated
     # by @require_auth so only authenticated users can request one.
@@ -387,42 +563,32 @@ def run_web_server(port: int = 5001, host: str = "0.0.0.0"):
             return {"error": "uuid required"}, 400
         token = _embed_auth.mint_guest_token(uuid)
         if not token:
-            return {"error": "could not mint guest token"}, 502
+            reason = _embed_auth.last_error or "unknown error"
+            log.warning("Guest-token mint failed for uuid=%s: %s", uuid, reason)
+            return {"error": "could not mint guest token", "reason": reason}, 502
         return {"token": token}
 
-    # ── PWA assets ───────────────────────────────────────────────────
-    @app.route("/manifest.webmanifest")
-    def manifest():
-        return send_from_directory(base_dir, "manifest.webmanifest",
-                                   mimetype="application/manifest+json")
-
-    @app.route("/service-worker.js")
-    def service_worker():
-        resp = send_from_directory(base_dir, "service-worker.js",
-                                   mimetype="application/javascript")
-        resp.headers["Service-Worker-Allowed"] = "/"
-        resp.headers["Cache-Control"] = "no-cache"
-        return resp
-
-    @app.route("/logo.png")
-    def logo():
-        return send_from_directory(base_dir, "logo.png", mimetype="image/png")
-
-    @app.route("/favicon.ico")
-    def favicon():
-        return send_from_directory(base_dir, "favicon.ico", mimetype="image/x-icon")
-
-    @app.route("/icon-<int:size>.png")
-    def icon_png(size: int):
-        if size not in (192, 512):
-            return {"error": "not found"}, 404
-        return send_from_directory(base_dir, f"icon-{size}.png", mimetype="image/png")
+    # ── Static assets (built frontend + PWA) ─────────────────────────
+    # Serve any file under frontend/dist — JS/CSS bundles, manifest.webmanifest,
+    # sw.js, icons, favicon. The exact API routes above take precedence over this
+    # catch-all, so /run, /guest-token, etc. are never shadowed.
+    @app.route("/<path:filename>")
+    def static_files(filename):
+        if os.path.isfile(os.path.join(frontend_dist, filename)):
+            resp = send_from_directory(frontend_dist, filename)
+            if filename.endswith(("sw.js", "registerSW.js")):
+                resp.headers["Service-Worker-Allowed"] = "/"
+                resp.headers["Cache-Control"] = "no-cache"
+            return resp
+        return {"error": "not found"}, 404
 
     @app.route("/run", methods=["POST"])
     @require_auth
     def run_pipeline():
         body = request.get_json(force=True, silent=True) or {}
         user_query = (body.get("query") or "").strip()
+        # Optional active-dashboard context for conversational follow-ups.
+        context = body.get("context") if isinstance(body.get("context"), dict) else None
 
         if not user_query:
             return {"error": "query is required"}, 400
@@ -442,7 +608,7 @@ def run_web_server(port: int = 5001, host: str = "0.0.0.0"):
         def run_in_thread():
             pipeline = Pipeline(on_progress=on_progress)
             try:
-                report = pipeline.run(user_query)
+                report = pipeline.run(user_query, context)
                 charts_ok = sum(1 for c in report.charts_created if c.success)
                 q.put({
                     "done": True,
@@ -453,6 +619,10 @@ def run_web_server(port: int = 5001, host: str = "0.0.0.0"):
                     "charts": charts_ok,
                     "charts_total": len(report.charts_created),
                     "errors": report.errors,
+                    # Context for the next turn (follow-ups) + suggested next questions.
+                    "dataset": report.dataset,
+                    "chart_names": [c.spec.name for c in report.charts_created if c.success],
+                    "followups": report.followups,
                 })
             except Exception as exc:
                 log.exception("Unhandled pipeline error")

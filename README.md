@@ -171,9 +171,10 @@ The Flask web UI is gated by **Keycloak**, reusing the same client as the `ui-cb
 Angular app (realm `cbn`, client `angular-client`). Only authenticated users can
 reach the UI, and the protection is enforced on **two layers**:
 
-- **Browser** — `index.html` boots `keycloak-js` with `onLoad: 'login-required'`
-  (PKCE `S256`). An unauthenticated visitor is redirected to the Keycloak login
-  and never sees the app; the access token is attached to every `POST /run`.
+- **Browser** — the React app boots `keycloak-js` with `onLoad: 'login-required'`
+  (PKCE `S256`) at startup ([frontend/src/auth/keycloak.ts](frontend/src/auth/keycloak.ts)).
+  An unauthenticated visitor is redirected to the Keycloak login and never sees the
+  app; the access token is attached to every `POST /run` and `POST /guest-token`.
 - **Server** — `POST /run` is wrapped with `@require_auth` ([keycloak_auth.py](agent/keycloak_auth.py)),
   which verifies the bearer token's signature against the realm JWKS, plus issuer
   and expiry. Direct API calls without a valid token get `401`. `GET /`, `/health`,

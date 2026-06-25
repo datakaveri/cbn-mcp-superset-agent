@@ -2,10 +2,16 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "ui-static",
-      "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8123", "--directory", "agent"],
-      "port": 8123
+      "name": "frontend",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "frontend", "dev"],
+      "port": 5173
+    },
+    {
+      "name": "agent",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-lc", "KEYCLOAK_ENABLED=false APP_BASE_PATH= .venv-local/bin/python agent/pipeline.py --port 5002"],
+      "port": 5002
     }
   ]
 }
