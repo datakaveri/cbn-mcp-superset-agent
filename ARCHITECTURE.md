@@ -61,7 +61,10 @@ Each `POST /run` builds a fresh `Pipeline` and streams these phases:
    (time/measure/dimension). Cached per dataset (`agent/cache.py`).
 5. **Plan** (`orchestrator.generate_plan`) — LLM picks the best candidate and emits
    a chart plan **using the profile** (good dimensions/measures, NL→column mapping
-   via sample values, chart type by shape, never aggregate Nullable columns).
+   via sample values, chart type by shape, never aggregate Nullable columns). For
+   time series it also sets a **`time_grain`** (ISO 8601 — `PT1M` minute … `P1Y`
+   year; `_norm_grain` also accepts plain words), so "errors per minute/day/week/
+   month" yields one chart per grain instead of four identical ones.
 6. **Refine** (`orchestrator.refine_plan`) — only if the plan used invalid columns
    (safety net, profile-aware).
 7. **Validate** (`agents/sql_agent.py`) — run probe SQL per chart; on failure,
@@ -71,9 +74,11 @@ Each `POST /run` builds a fresh `Pipeline` and streams these phases:
    MCP limitation — see Constraints).
 9. **Create** (`agents/chart_agent.py`) — build each chart config and call
    `generate_chart` (self-corrects on MCP errors; supports multi-metric series).
-   Chart types the MCP can't render (box_plot, treemap, sunburst, funnel,
-   waterfall) are created via the **Superset REST fallback** (`superset_auth.
-   create_chart` — raw `viz_type` + `form_data` + stored `query_context`).
+   Chart types the MCP can't render (box_plot, histogram, treemap, sunburst, funnel,
+   waterfall, gauge, radar, sankey, bubble, real heatmap, smooth line, calendar
+   heatmap, country map, geo density) are created via the **Superset REST fallback**
+   (`superset_auth.create_chart` — raw `viz_type` + `form_data` + stored
+   `query_context`). See **Chart types** below.
     Steps 5–9 run per dataset via `Pipeline._validate_keep_create`. **Dataset
     fallback**: if the chosen dataset produces *no rendered chart* (bad column
     types, broken virtual-dataset SQL, or a create-time error), the pipeline
@@ -124,13 +129,42 @@ subtree to the container.
 
 ## Chart types
 - **Via the MCP `generate_chart`**: xy (bar/line/area/scatter, +stacked/horizontal/
-  grouped), pie/donut, table, pivot_table (heatmap), big_number, mixed_timeseries
-  (combo), handlebars.
-- **Via the Superset REST fallback** (`chart_agent` + `superset_auth.create_chart`):
-  box_plot, histogram, treemap, sunburst, funnel, waterfall, gauge, radar, sankey,
-  bubble — the MCP rejects these, so they're created with a raw `viz_type` +
-  `form_data` (+ stored `query_context`). Add a new viz by extending
-  `chart_agent._REST_VIZ` + `_build_rest_chart`.
+  grouped), pie/donut, table, pivot_table, big_number, mixed_timeseries (combo),
+  handlebars.
+- **Via the Superset REST fallback** (`chart_agent` + `superset_auth.create_chart`) —
+  the MCP rejects these, so they're created with a raw `viz_type` + `form_data` (+ a
+  stored `query_context`, so they render deterministically). Each was verified
+  end-to-end against the live Superset (`chart/data` 200 + chart create 201) using
+  `form_data` templates lifted from real existing charts:
+  - **Distribution / part-of-whole / flow**: box_plot, histogram (→`histogram_v2`),
+    treemap (→`treemap_v2`), sunburst (→`sunburst_v2`), funnel, waterfall, gauge
+    (→`gauge_chart`), radar, sankey (→`sankey_v2`), bubble (→`bubble_v2`).
+  - **Real eCharts heatmap** (→`heatmap_v2`): an `x_axis` × `groupby` (single
+    category) matrix of the metric — distinct from the `pivot_table` numeric grid.
+  - **smooth_line** (→`echarts_timeseries_smooth`): a curved-line time series.
+  - **cal_heatmap**: a metric per day on a month/year calendar grid (needs a
+    `time_column`). The viz REQUIRES a bounded `time_range` (Since AND Until) or it
+    errors "Please provide both time bounds" — so the builder sets one from the
+    plan's date-range filters, falling back to the dataset's actual MIN/MAX of the
+    time column (`_data_time_range`, a cheap `/chart/data` probe) so the calendar
+    spans the real data instead of unbounded time.
+  - **country_map**: a Nigeria choropleth shaded per state/region. The map matches
+    regions by **NG-XX ISO_3166-2 codes, not names**, so `chart_agent._region_col`
+    auto-picks an ISO-code column (`iso_code`, `stateISO`, …) when present — a names
+    column (`"Lagos State"`) renders blank.
+  - **deck_screengrid**: a geospatial density map — needs latitude+longitude columns
+    (auto-detected by `chart_agent._geo_cols`) and a Mapbox token configured in
+    Superset.
+
+  Add a new viz by extending `chart_agent._REST_VIZ` + a branch in `_build_rest_chart`
+  (and the chart-type list in `config.VALID_CHART_TYPES` + the planner prompt). For
+  geo/temporal viz types, the planner is told to pick them only when the dataset has
+  the required columns, and the builders degrade gracefully otherwise.
+- **Plan filters apply to REST charts too**: `_build_rest_chart` propagates
+  `spec.filters` (date ranges, `status='COMPLETED'`, `amount>1000`, IN-lists) into
+  BOTH the stored `query_context` and `form_data.adhoc_filters`, mapping the MCP
+  equality op `=` → Superset's `==`. Without this a chart titled e.g. "Jan–Mar 2026"
+  would silently render all-time data.
 
 ## Known constraints
 - **Non-numeric aggregates**: the MCP rejects SUM/AVG/MIN/MAX on ClickHouse
@@ -140,6 +174,13 @@ subtree to the container.
 - **`COUNT(*)`**: the MCP rejects metric name `'*'` — count a real column instead
   (handled in `chart_agent`).
 - **`delete_dashboard`** errors in the MCP — use Superset's REST `DELETE` instead.
+- **Time grain** applies only where a chart has a bucketable time axis: the xy family
+  (line/bar/area/scatter), combo, smooth-line, and the real heatmap (temporal
+  x-axis). Pure categorical/geo/distribution charts (pie, funnel, treemap, sunburst,
+  gauge, radar, sankey, histogram, box_plot, country_map, deck) have no time axis, so
+  grain is N/A; cal_heatmap's grain is fixed (one cell per day). The MCP **rejects a
+  `time_grain` on pivot_table/table configs** ("An error occurred"), so a temporal
+  dimension there isn't bucketed unless the chart is routed through the REST fallback.
 - Some pre-existing **virtual datasets have broken SQL** (alias-in-GROUP-BY →
   `NOT_AN_AGGREGATE`); the probe catches these and the agent falls back to a
   sibling dataset.
