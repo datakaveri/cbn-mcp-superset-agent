@@ -182,7 +182,10 @@ class Pipeline:
             candidates = [self.dataset_agent.enrich(catalog[0])]
 
         self._emit(Phase.PLAN_GENERATION, "info", f"Generating plan from: '{user_query[:80]}...'")
-        plan_result = self.orchestrator.generate_plan(user_query, candidates, profiles)
+        # On a follow-up the planner sees the dashboard it's extending (earlier
+        # questions + existing charts), so "it"/"the same" resolve and nothing repeats.
+        plan_context = context if intent == "followup" else None
+        plan_result = self.orchestrator.generate_plan(user_query, candidates, profiles, plan_context)
         if not plan_result.success:
             self._emit(Phase.PLAN_GENERATION, "error", f"Plan failed: {plan_result.error}")
             report = PipelineReport()
@@ -219,7 +222,7 @@ class Pipeline:
                     continue
                 self._emit(Phase.PLAN_GENERATION, "warning",
                            f"No chart rendered on '{schema.table_name}' — trying '{alt.table_name}'…")
-                alt_res = self.orchestrator.generate_plan(user_query, [alt], profiles)
+                alt_res = self.orchestrator.generate_plan(user_query, [alt], profiles, plan_context)
                 if not alt_res.success:
                     continue
                 alt_prof = profiles.get(alt.table_name)
@@ -276,10 +279,17 @@ class Pipeline:
         report.dataset = schema.table_name
         # Contextual follow-up suggestions (best-effort) once a dashboard exists.
         if report.success and report.dashboard_id:
-            existing = [c.spec.name for c in chart_results if c.success]
+            # Suggestions should know the whole dashboard: on a follow-up, the charts
+            # already on it plus this run's, and the questions asked before.
+            new_names = [c.spec.name for c in chart_results if c.success]
+            prior_names, earlier = [], []
+            if plan_context:
+                prior_names = [c.get("name") for c in (plan_context.get("charts") or []) if c.get("name")] \
+                    or list(plan_context.get("chart_names") or [])
+                earlier = list(plan_context.get("queries") or [])
             try:
                 report.followups = suggester.followup_suggestions(
-                    user_query, schema.table_name, profile_text, existing, self.llm)
+                    user_query, schema.table_name, profile_text, prior_names + new_names, self.llm, earlier)
             except Exception as e:
                 log.info("Followup suggestions failed: %s", e)
         charts_ok = sum(1 for c in chart_results if c.success)
@@ -622,6 +632,18 @@ def run_web_server(port: int = 5001, host: str = "0.0.0.0"):
                     # Context for the next turn (follow-ups) + suggested next questions.
                     "dataset": report.dataset,
                     "chart_names": [c.spec.name for c in report.charts_created if c.success],
+                    # What each chart shows, so the client can send it back as
+                    # context and the next follow-up can refer to it.
+                    "charts_detail": [
+                        {"name": c.spec.name, "chart_type": c.spec.chart_type,
+                         "metric": ", ".join([c.spec.metric] + [
+                             m.get("label") or f"{m.get('aggregate')}({m.get('metric_column')})"
+                             for m in (c.spec.extra_metrics or []) if isinstance(m, dict)]),
+                         "dimension": c.spec.dimension or None, "series_column": c.spec.series_column,
+                         "time_grain": c.spec.time_grain, "row_limit": c.spec.row_limit,
+                         "filters": c.spec.filters or []}
+                        for c in report.charts_created if c.success
+                    ],
                     "followups": report.followups,
                 })
             except Exception as exc:

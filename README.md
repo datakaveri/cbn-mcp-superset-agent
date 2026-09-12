@@ -141,6 +141,9 @@ All settings are read from environment variables with sensible defaults. A `.env
 | `LLM_TIMEOUT` | `600` | LLM request timeout in seconds |
 | `LLM_TEMPERATURE` | _(unset)_ | Optional sampling temperature; omitted by default to use the model default |
 | `LLM_MAX_TOKENS` | `16000` | Output-token cap, sent as `max_completion_tokens`. Reasoning models count reasoning toward it, so keep it generous. `0` omits the cap. |
+| `LLM_REASONING_EFFORT` | _(model default)_ | Reasoning effort for planning (`none`, `low`, `medium`, `high`, `xhigh`, `max`). Empty uses the model's default, which is `medium` on GPT-5.6. |
+| `LLM_REASONING_EFFORT_FAST` | `low` | Reasoning effort for the small calls: intent, dataset shortlist, and suggestions. Set empty for a model that doesn't accept the parameter. |
+| `LLM_STRUCTURED_OUTPUTS` | `true` | Request strict JSON-schema output (Structured Outputs). If the endpoint rejects it, calls fall back to plain JSON mode. |
 | `KEYCLOAK_ENABLED` | `true` | Gate the web UI behind Keycloak login. Set `false` to disable auth (local dev only). |
 | `KEYCLOAK_URL` | `https://keycloak.idx-ng.com/auth` | Keycloak base URL (same as ui-cbn) |
 | `KEYCLOAK_REALM` | `cbn` | Keycloak realm |

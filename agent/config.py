@@ -95,6 +95,16 @@ LLM_TEMPERATURE = float(_llm_temp) if _llm_temp not in (None, "") else None
 # (finish_reason=length → "Could not parse JSON"). Sent as max_completion_tokens.
 # Set to 0 to omit the cap entirely.
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "16000"))
+# Reasoning effort per call type (GPT-5.x: none | low | medium | high | xhigh | max).
+# Planning uses LLM_REASONING_EFFORT (empty = the model's default, medium on
+# GPT-5.6). The small classification calls (intent, dataset shortlist,
+# suggestions) use LLM_REASONING_EFFORT_FAST. Set both empty for a model that
+# doesn't accept the parameter; a rejected value is also retried without it.
+LLM_REASONING_EFFORT = _env("LLM_REASONING_EFFORT")
+LLM_REASONING_EFFORT_FAST = _env("LLM_REASONING_EFFORT_FAST", "low")
+# Request strict JSON-schema output (Structured Outputs) where a schema is given.
+# If the endpoint rejects it, the call falls back to plain JSON mode.
+LLM_STRUCTURED_OUTPUTS = _env("LLM_STRUCTURED_OUTPUTS", "true").lower() not in ("0", "false", "no")
 
 # ── Pipeline Tuning ───────────────────────────────────────────────────
 MAX_CHART_RETRIES = int(os.getenv("MAX_CHART_RETRIES", "3"))

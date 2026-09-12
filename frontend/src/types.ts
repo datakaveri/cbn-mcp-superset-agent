@@ -15,6 +15,18 @@ export interface AuthConfig {
   embed: EmbedConfig;
 }
 
+/** What a chart on the dashboard shows — sent back so follow-ups can refer to it. */
+export interface ChartDetail {
+  name: string;
+  chart_type: string;
+  metric?: string;
+  dimension?: string | null;
+  series_column?: string | null;
+  time_grain?: string | null;
+  row_limit?: number | null;
+  filters?: { col: string; op: string; val: unknown }[];
+}
+
 /** A single SSE event emitted by the backend pipeline (POST /run). */
 export interface PipelineEvent {
   phase?: string;
@@ -30,6 +42,7 @@ export interface PipelineEvent {
   errors?: string[];
   dataset?: string;          // dataset the dashboard was built on
   chart_names?: string[];    // names of charts on the dashboard
+  charts_detail?: ChartDetail[]; // what each new chart shows
   followups?: string[];      // suggested next questions
 }
 
@@ -39,6 +52,8 @@ export interface ActiveDashboard {
   dashboard_uuid?: string;
   dataset?: string;
   chart_names?: string[];
+  charts?: ChartDetail[];    // every chart on the dashboard so far
+  queries?: string[];        // questions asked on this dashboard, oldest first
 }
 
 export interface LogLine {

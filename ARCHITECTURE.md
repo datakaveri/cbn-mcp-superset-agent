@@ -12,7 +12,7 @@ hosted **Superset MCP** service, then embeds the result with a guest token.
  │ chat UI           │  /suggestions │  routes                        │────▶│ (meta-tools) │──▶ ClickHouse
  │ SSE stream render │──/run (SSE)──▶│  Pipeline → agents             │     └──────────────┘
  │ embedded SDK      │  /guest-token │  profiler / suggester / LLM    │     ┌──────────────┐
- └───────────────────┘──────────────▶└──────────────────────────────┘────▶│ OpenAI gpt-5.5│
+ └───────────────────┘──────────────▶└──────────────────────────────┘────▶│ Luna (Mantle) │
         │  embed iframe (guest token)            │  register_embedding /     └──────────────┘
         └────────────────────────────────────────  mint_guest_token (REST) ─▶ Superset
 ```
@@ -25,7 +25,9 @@ hosted **Superset MCP** service, then embeds the result with a guest token.
 - **State** (`src/hooks/usePipeline.ts`): owns the message list, streams `/run`,
   mutates the live assistant message as SSE events arrive, tracks the **active
   dashboard** (sent back as `context` so the next query can be a follow-up), and
-  stores per-message **follow-up** suggestions.
+  stores per-message **follow-up** suggestions. The context accumulates while the
+  user stays on one dashboard: every question asked and every chart's details
+  (type, measure, dimension, split, grain, top-N, filters) from `charts_detail`.
 - **Message** (`src/components/Message.tsx`): phase chips, collapsible logs, the
   inline `DashboardEmbed` (only the latest message embeds, to avoid many iframes),
   and clickable follow-up chips.
@@ -52,7 +54,8 @@ Each `POST /run` builds a fresh `Pipeline` and streams these phases:
 
 1. **Health** — init MCP session + health check.
 2. **Intent** (`orchestrator.classify_intent`) — *new dashboard* vs *follow-up*
-   (only "follow-up" when an active-dashboard `context` is present).
+   (only "follow-up" when an active-dashboard `context` is present). It sees the
+   dashboard's earlier questions and charts.
 3. **Shortlist** (`orchestrator.shortlist_datasets`) — LLM picks 1-3 candidate
    datasets by name from the live catalog (`dataset_agent.build_catalog`).
 4. **Profile** (`agents/profiler.py`) — enrich + profile each candidate via a few
@@ -64,7 +67,12 @@ Each `POST /run` builds a fresh `Pipeline` and streams these phases:
    via sample values, chart type by shape, never aggregate Nullable columns). For
    time series it also sets a **`time_grain`** (ISO 8601 — `PT1M` minute … `P1Y`
    year; `_norm_grain` also accepts plain words), so "errors per minute/day/week/
-   month" yields one chart per grain instead of four identical ones.
+   month" yields one chart per grain instead of four identical ones. The chart
+   count follows the question: one for a specific chart, one per named view, 2–4
+   complementary charts for an open question, never more than 6. On a follow-up
+   the planner also gets the **current dashboard** (earlier questions + chart
+   details), returns only the new charts, resolves "it"/"the same", and turns
+   "break it down by X" into the referenced chart split by X.
 6. **Refine** (`orchestrator.refine_plan`) — only if the plan used invalid columns
    (safety net, profile-aware).
 7. **Validate** (`agents/sql_agent.py`) — run probe SQL per chart; on failure,
@@ -115,6 +123,22 @@ name. Tools used: `list_datasets`, `get_dataset_info`, `execute_sql`,
   `register_embedding` makes the dashboard embeddable, and `mint_guest_token`
   issues a short-lived, dashboard-scoped token. Only the public Keycloak client id,
   the user's own token, and the guest token ever reach the browser.
+
+## LLM calls (`agent/llm_client.py`)
+The model is GPT-5.6 Luna on Amazon Bedrock Mantle (any OpenAI-compatible
+chat-completions endpoint works through `LLM_BASE_URL`/`LLM_MODEL`).
+- **Prompts** follow OpenAI's GPT-5.6 guidance: short, outcome-first instructions
+  and decision rules, no restated rules or format prose. An A/B eval against the
+  earlier rule-heavy prompt got more charts right, 0 follow-up duplicates (was
+  1), plans ~30% faster, and half the reasoning tokens.
+- **Strict JSON schemas** (Structured Outputs) define every output: the plan
+  (`orchestrator.PLAN_SCHEMA`, chart types as an enum, nullable optional fields,
+  extra measures in `extra_metrics`), intent, dataset shortlist, and suggestions.
+  If an endpoint rejects a schema or `reasoning_effort`, the call is retried once
+  in plain JSON mode with the schema written into the prompt.
+- **Reasoning effort** per call type: planning and refinement use the model
+  default (`LLM_REASONING_EFFORT`); intent, shortlist, and suggestions use
+  `LLM_REASONING_EFFORT_FAST` (`low`), which kept 100% accuracy on the eval.
 
 ## Caching (`agent/cache.py`)
 Module-level TTL cache (survives the per-request `Pipeline`): dataset **profiles**
@@ -184,5 +208,6 @@ subtree to the container.
 - Some pre-existing **virtual datasets have broken SQL** (alias-in-GROUP-BY →
   `NOT_AN_AGGREGATE`); the probe catches these and the agent falls back to a
   sibling dataset.
-- LLM model is OpenAI `gpt-5.5` (a reasoning model); JSON-mode + a generous
-  `max_completion_tokens` prevent truncated plans.
+- The LLM is a reasoning model (GPT-5.6 Luna); a generous `max_completion_tokens`
+  prevents truncated plans, and a `finish_reason=length` response is reported
+  instead of parsed.

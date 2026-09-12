@@ -8,13 +8,17 @@ Amazon Bedrock Mantle works unchanged: point LLM_BASE_URL at
 https://bedrock-mantle.<region>.api.aws/openai/v1 and use a Bedrock API key.
 When LLM_PROJECT_ID is set it goes out as the OpenAI-Project header, which
 Mantle uses to attribute the request to a Bedrock project.
+
+Callers can pass a JSON schema (sent as a strict Structured Outputs
+response_format) and a per-call reasoning_effort. If the endpoint rejects
+either, the call is retried once in plain JSON mode without them.
 """
 
 import json
 import logging
 import re
 import requests
-from typing import Any
+from typing import Any, Optional
 
 from config import (
     LLM_BASE_URL,
@@ -25,6 +29,7 @@ from config import (
     LLM_PROJECT_ID,
     LLM_TEMPERATURE,
     LLM_MAX_TOKENS,
+    LLM_STRUCTURED_OUTPUTS,
 )
 
 log = logging.getLogger(__name__)
@@ -42,21 +47,29 @@ class LLMClient:
         self.temperature = LLM_TEMPERATURE
         self._http = requests.Session()
 
-    def generate(self, system_prompt: str, user_prompt: str, json_mode: bool = False) -> str:
+    def generate(self, system_prompt: str, user_prompt: str, json_mode: bool = False,
+                 schema: Optional[dict] = None, schema_name: str = "response",
+                 reasoning_effort: Optional[str] = None) -> str:
         """
-        Call the LLM and return the raw text response.
-        Raises LLMError on failure. When json_mode is set, asks the API for a
-        guaranteed JSON object (response_format) — callers must instruct JSON.
+        Call the LLM and return the raw text response. Raises LLMError on failure.
+        json_mode asks for a JSON object; a `schema` asks for strict Structured
+        Outputs matching it (the prompt still describes the task). reasoning_effort
+        (none/low/medium/high/...) is sent only when given.
         """
         if not self.api_key:
             raise LLMError(
                 "No LLM API key configured. Set OPENAI_API_KEY (or LLM_API_KEY)."
             )
 
+        strict = schema is not None and LLM_STRUCTURED_OUTPUTS
+        system = system_prompt
+        if schema is not None and not strict:
+            system += self._schema_hint(schema)
+
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": system},
                 {"role": "user", "content": user_prompt},
             ],
         }
@@ -68,8 +81,15 @@ class LLMClient:
         # a generous value prevents the JSON plan from being truncated mid-response.
         if LLM_MAX_TOKENS > 0:
             payload["max_completion_tokens"] = LLM_MAX_TOKENS
-        if json_mode:
+        if strict:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": schema_name, "strict": True, "schema": schema},
+            }
+        elif json_mode or schema is not None:
             payload["response_format"] = {"type": "json_object"}
+        if reasoning_effort:
+            payload["reasoning_effort"] = reasoning_effort
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -78,19 +98,24 @@ class LLMClient:
         if self.project:
             headers["OpenAI-Project"] = self.project
 
-        log.info("LLM call: model=%s, prompt_len=%d", self.model, len(user_prompt))
+        log.info("LLM call: model=%s, prompt_len=%d, schema=%s, effort=%s",
+                 self.model, len(user_prompt), schema_name if schema else None, reasoning_effort)
 
         try:
-            resp = self._http.post(
-                self.url, json=payload, headers=headers, timeout=self.timeout,
-            )
-            resp.raise_for_status()
-        except requests.HTTPError as e:
-            # Surface the API's error body, which carries the useful detail.
-            detail = self._error_detail(e.response) if e.response is not None else ""
-            raise LLMError(f"LLM request failed: {e}{f' — {detail}' if detail else ''}") from e
-        except requests.RequestException as e:
-            raise LLMError(f"LLM request failed: {e}") from e
+            resp = self._post(payload, headers)
+        except LLMError as e:
+            if e.status != 400 or not (strict or "reasoning_effort" in payload):
+                raise
+            # Some OpenAI-compatible endpoints reject strict schemas or
+            # reasoning_effort. Retry once in plain JSON mode without them, with the
+            # schema spelled out in the prompt so the shape stays the same.
+            log.warning("LLM endpoint rejected structured output or reasoning_effort (%s); "
+                        "retrying in plain JSON mode", e)
+            payload.pop("reasoning_effort", None)
+            if strict:
+                payload["response_format"] = {"type": "json_object"}
+                payload["messages"][0]["content"] = system_prompt + self._schema_hint(schema)
+            resp = self._post(payload, headers)
 
         data = resp.json()
 
@@ -119,6 +144,26 @@ class LLMClient:
 
         raise LLMError(f"Unexpected LLM response format: {list(data.keys())}")
 
+    def _post(self, payload: dict, headers: dict):
+        """POST the payload; raise LLMError (with the HTTP status) on failure."""
+        try:
+            resp = self._http.post(self.url, json=payload, headers=headers, timeout=self.timeout)
+            resp.raise_for_status()
+            return resp
+        except requests.HTTPError as e:
+            # Surface the API's error body, which carries the useful detail.
+            detail = self._error_detail(e.response) if e.response is not None else ""
+            status = e.response.status_code if e.response is not None else None
+            raise LLMError(f"LLM request failed: {e}{f' — {detail}' if detail else ''}", status=status) from e
+        except requests.RequestException as e:
+            raise LLMError(f"LLM request failed: {e}") from e
+
+    @staticmethod
+    def _schema_hint(schema: dict) -> str:
+        """Spell the schema out in the prompt when strict mode isn't used."""
+        return ("\n\nRespond with one JSON object matching this JSON schema:\n"
+                + json.dumps(schema, separators=(",", ":")))
+
     @staticmethod
     def _error_detail(response) -> str:
         """The message from an error body. OpenAI nests it under error.message;
@@ -138,12 +183,14 @@ class LLMClient:
                 return str(body["message"])
         return response.text[:300]
 
-    def generate_json(self, system_prompt: str, user_prompt: str) -> Any:
+    def generate_json(self, system_prompt: str, user_prompt: str, schema: Optional[dict] = None,
+                      schema_name: str = "response", reasoning_effort: Optional[str] = None) -> Any:
         """
-        Call the LLM and parse the response as JSON.
-        Uses JSON mode (response_format) and strips any markdown fences.
+        Call the LLM and parse the response as JSON: strict Structured Outputs when
+        a schema is given, JSON mode otherwise. Strips any markdown fences.
         """
-        raw = self.generate(system_prompt, user_prompt, json_mode=True)
+        raw = self.generate(system_prompt, user_prompt, json_mode=True, schema=schema,
+                            schema_name=schema_name, reasoning_effort=reasoning_effort)
         return self._extract_json(raw)
 
     @staticmethod
@@ -179,5 +226,8 @@ class LLMClient:
 
 
 class LLMError(Exception):
-    """Raised when LLM calls fail."""
-    pass
+    """Raised when LLM calls fail. `status` is the HTTP status when there was one."""
+
+    def __init__(self, message: str, status: Optional[int] = None):
+        super().__init__(message)
+        self.status = status

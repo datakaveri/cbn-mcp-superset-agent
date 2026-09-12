@@ -48,6 +48,22 @@ export function usePipeline() {
 
       try {
         for await (const ev of runPipeline(q, activeRef.current, ac.signal)) {
+          // Remember the dashboard so the next query can extend it. A follow-up
+          // returns the same dashboard id, so its questions and charts accumulate
+          // and the planner can resolve "it" / "the same". Kept outside the state
+          // updater below, which React may run twice.
+          if (ev.done && ev.success && ev.dashboard_id) {
+            const prev = activeRef.current;
+            const same = prev?.dashboard_id === ev.dashboard_id;
+            activeRef.current = {
+              dashboard_id: ev.dashboard_id,
+              dashboard_uuid: ev.dashboard_uuid,
+              dataset: ev.dataset,
+              chart_names: [...(same ? (prev?.chart_names ?? []) : []), ...(ev.chart_names ?? [])],
+              charts: [...(same ? (prev?.charts ?? []) : []), ...(ev.charts_detail ?? [])],
+              queries: [...(same ? (prev?.queries ?? []) : []), q],
+            };
+          }
           patch(aid, (m) => {
             const next: AssistantMessage = {
               ...m,
@@ -75,15 +91,6 @@ export function usePipeline() {
               next.chartCount = ev.charts;
               next.followups = ev.followups || [];
               next.elapsed = Math.round((performance.now() - start) / 100) / 10;
-              // Remember this dashboard so the next query can extend it.
-              if (ev.success && ev.dashboard_id) {
-                activeRef.current = {
-                  dashboard_id: ev.dashboard_id,
-                  dashboard_uuid: ev.dashboard_uuid,
-                  dataset: ev.dataset,
-                  chart_names: ev.chart_names,
-                };
-              }
             }
             return next;
           });
