@@ -159,6 +159,24 @@ class SupersetAuth:
             return None
         return (resp.json() or {}).get("id")
 
+    def query_data(self, dataset_id, query):
+        """
+        Run a single query against /chart/data and return its rows (list of dicts),
+        or None on failure. Used for lightweight probes — e.g. a column's MIN/MAX so
+        a cal_heatmap can be given a bounded time_range.
+        """
+        resp = self._api_post("/chart/data", {
+            "datasource": {"id": int(dataset_id), "type": "table"},
+            "force": False, "result_type": "results", "result_format": "json",
+            "queries": [query],
+        })
+        if resp is None:
+            return None
+        try:
+            return resp.json()["result"][0].get("data") or []
+        except (KeyError, IndexError, ValueError, TypeError):
+            return None
+
     def mint_guest_token(self, resource_uuid, rls=None):
         """
         Mint a Superset guest token scoped to an embedded dashboard, so the agent

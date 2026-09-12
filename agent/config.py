@@ -123,9 +123,8 @@ VALID_CHART_TYPES = {
     "donut":        "donut",
     # Table
     "table":        "table",
-    # Pivot matrix (also used to render "heatmap" requests)
+    # Pivot matrix
     "pivot_table":  "pivot_table",
-    "heatmap":      "pivot_table",
     # Big number
     "big_number":          "big_number",
     "big_number_total":    "big_number_total",
@@ -133,7 +132,8 @@ VALID_CHART_TYPES = {
     "combo":            "mixed_timeseries",
     "mixed_timeseries": "mixed_timeseries",
     # REST-fallback charts — the MCP can't render these, so chart_agent creates
-    # them via Superset's REST API (raw viz_type + form_data).
+    # them via Superset's REST API (raw viz_type + form_data + stored query_context).
+    # Each was verified end-to-end against the live Superset.
     "box_plot":   "box_plot",
     "boxplot":    "box_plot",
     "funnel":     "funnel",
@@ -145,6 +145,16 @@ VALID_CHART_TYPES = {
     "sankey":     "sankey",
     "histogram":  "histogram",
     "bubble":     "bubble",
+    # Real eCharts heatmap (x-axis × category matrix).
+    "heatmap":    "heatmap",
+    # Choropleth — value per Nigerian state/region (needs a state/region column).
+    "country_map": "country_map",
+    # Calendar heatmap — metric per day (needs a time column).
+    "cal_heatmap": "cal_heatmap",
+    # Smooth (curved) line time series.
+    "smooth_line": "smooth_line",
+    # Geospatial density on a basemap (needs latitude/longitude columns).
+    "deck_screengrid": "deck_screengrid",
 }
 
 # ── MCP filter operators (exactly what Superset MCP accepts) ─────────

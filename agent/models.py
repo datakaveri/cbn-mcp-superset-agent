@@ -52,6 +52,7 @@ class ChartSpec:
     aggregate: str           # e.g. "SUM", "COUNT", "AVG"
     dimension: str           # e.g. "state", "bank_name"
     time_column: Optional[str] = None    # for temporal charts
+    time_grain: Optional[str] = None     # ISO 8601 grain for time-series (PT1M/P1D/P1W/P1M/P1Y)
     filters: Optional[list] = None       # list of {col, op, val} dicts
     # Chart-level display options — populated from LLM plan extras
     stack: bool = False                  # stacked bar/area

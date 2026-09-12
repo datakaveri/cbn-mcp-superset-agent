@@ -22,6 +22,7 @@ Retries up to MAX_CHART_RETRIES times, applying self-correction on each error.
 """
 
 import copy
+import datetime
 import logging
 import re
 
@@ -109,6 +110,8 @@ _OP_NORMALISE: dict[str, str] = {
 
 # Chart types the MCP's generate_chart can't render → created via Superset REST
 # (chart_agent._create_rest_chart). Maps our type → the real Superset viz_type.
+# All viz_types below were verified end-to-end (chart/data 200 + chart create 201)
+# against the live Superset, using form_data templates lifted from real charts.
 _REST_VIZ: dict[str, str] = {
     "box_plot":  "box_plot",
     "boxplot":   "box_plot",
@@ -119,9 +122,26 @@ _REST_VIZ: dict[str, str] = {
     "gauge":     "gauge_chart",
     "radar":     "radar",
     "sankey":    "sankey_v2",
-    "histogram": "histogram",
+    "histogram": "histogram_v2",
     "bubble":    "bubble_v2",
+    # Real eCharts heatmap (x-axis × category matrix), not the pivot_table proxy.
+    "heatmap":      "heatmap_v2",
     "real_heatmap": "heatmap_v2",
+    # Choropleth — value shaded per state/region (Nigeria map).
+    "country_map":  "country_map",
+    "map":          "country_map",
+    "choropleth":   "country_map",
+    # Calendar heatmap — a metric per day across a month/year grid.
+    "cal_heatmap":      "cal_heatmap",
+    "calendar_heatmap": "cal_heatmap",
+    "calendar":         "cal_heatmap",
+    # Smooth-line time series (curved eCharts line).
+    "smooth_line":  "echarts_timeseries_smooth",
+    "smooth":       "echarts_timeseries_smooth",
+    # Geospatial density — points/screengrid on a basemap (needs lat/long columns).
+    "deck_screengrid": "deck_screengrid",
+    "density_map":     "deck_screengrid",
+    "geo_density":     "deck_screengrid",
 }
 
 
@@ -180,6 +200,128 @@ class ChartAgent:
             result.error = f"REST chart create error: {e}"
         return result
 
+    # ── Column-role helpers (for geo / temporal viz types) ────────────
+
+    @staticmethod
+    def _find_col(schema: DatasetSchema, *needles) -> str | None:
+        """First column whose name contains any needle (case-insensitive)."""
+        for name in schema.columns:
+            low = name.lower()
+            if any(n in low for n in needles):
+                return name
+        return None
+
+    @staticmethod
+    def _geo_cols(schema: DatasetSchema):
+        """(lat, lon) column names if the dataset has them, else (None, None)."""
+        lat = (ChartAgent._find_col(schema, "latitude", "gps_lat", "_lat")
+               or ChartAgent._find_col(schema, "lat"))
+        lon = (ChartAgent._find_col(schema, "longitude", "gps_lon", "gps_lng", "_lon", "_lng")
+               or ChartAgent._find_col(schema, "lon", "lng"))
+        return lat, lon
+
+    # ISO-code column patterns: iso_code, stateISO, state_iso, iso2/iso3, cca2/cca3.
+    # The Nigeria country_map matches on NG-XX ISO_3166-2 codes (not state names), so
+    # an ISO column renders correctly while a names column ("Lagos State") goes blank.
+    _ISO_COL_RE = re.compile(r"(?:^|_)iso|iso(?:[_0-9]|$)|cca[23]", re.I)
+
+    @staticmethod
+    def _region_col(schema: DatasetSchema, preferred: str | None = None) -> str | None:
+        """A state/region column for the choropleth — STRONGLY prefer an ISO-coded
+        column, since the country_map matches on ISO codes, not names."""
+        for name in schema.columns:
+            if ChartAgent._ISO_COL_RE.search(name):
+                return name
+        if preferred and preferred in schema.columns:
+            return preferred
+        return ChartAgent._find_col(schema, "state", "region", "province", "country") or preferred
+
+    @staticmethod
+    def _time_col(schema: DatasetSchema, preferred: str | None = None) -> str | None:
+        """A temporal column for calendar/time-series viz types. Prefer `preferred`
+        only when it's actually temporal; otherwise the first temporal column; else
+        fall back to `preferred` (or None) so callers can detect 'no time column'."""
+        if preferred and ChartAgent._is_temporal(schema, preferred):
+            return preferred
+        for name in schema.columns:
+            if ChartAgent._is_temporal(schema, name):
+                return name
+        return preferred if (preferred and preferred in schema.columns) else None
+
+    @staticmethod
+    def _is_temporal(schema: DatasetSchema, col: str) -> bool:
+        t = (schema.columns.get(col, "") or "").upper()
+        return any(x in t for x in ("TIMESTAMP", "DATETIME", "DATE", "TIME"))
+
+    @classmethod
+    def _axis_col(cls, col: str, schema: DatasetSchema, grain: str | None):
+        """For a REST query: return a bucketed adhoc BASE_AXIS column when `col` is a
+        temporal column (so the time axis groups by the grain), else the plain name."""
+        if grain and cls._is_temporal(schema, col):
+            return {"timeGrain": grain, "columnType": "BASE_AXIS", "sqlExpression": col,
+                    "label": col, "expressionType": "SQL"}
+        return col
+
+    @staticmethod
+    def _iso_date(v) -> str | None:
+        """Normalise a min/max probe value (epoch-ms number or date string) → 'YYYY-MM-DD'."""
+        if v is None:
+            return None
+        if isinstance(v, (int, float)):
+            try:
+                return datetime.datetime.utcfromtimestamp(v / 1000).strftime("%Y-%m-%d")
+            except (ValueError, OSError, OverflowError):
+                return None
+        s = str(v).strip()
+        return s[:10] if s else None
+
+    @staticmethod
+    def _extract_time_range(filters, tcol):
+        """Pull a Superset 'since : until' time_range out of plan filters on the time
+        column. Returns (range_str | None, remaining_filters). Only forms a range when
+        BOTH bounds are present, so the time-axis viz gets explicit Since AND Until."""
+        if not filters or not tcol:
+            return None, filters
+        since = until = None
+        rest = []
+        for f in filters:
+            if not isinstance(f, dict):
+                continue
+            col = f.get("col") or f.get("column") or f.get("subject") or f.get("field")
+            op = str(f.get("op") or f.get("operator") or "").strip()
+            val = f.get("val") if f.get("val") is not None else f.get("value")
+            if col == tcol and op in (">=", ">"):
+                since = val
+            elif col == tcol and op in ("<=", "<"):
+                until = val
+            else:
+                rest.append(f)
+        if since is not None and until is not None:
+            return f"{since} : {until}", rest
+        return None, filters
+
+    def _data_time_range(self, schema: DatasetSchema, tcol: str) -> str | None:
+        """Probe the dataset for MIN/MAX of the time column → a bounded 'since : until'
+        time_range, so a cal_heatmap spans the actual data instead of erroring on
+        unbounded time. Returns None if the probe is unavailable/fails."""
+        if not self.auth or not tcol:
+            return None
+        mn = {"expressionType": "SIMPLE", "column": {"column_name": tcol}, "aggregate": "MIN", "label": "mn"}
+        mx = {"expressionType": "SIMPLE", "column": {"column_name": tcol}, "aggregate": "MAX", "label": "mx"}
+        rows = self.auth.query_data(schema.id, {"metrics": [mn, mx], "columns": [], "row_limit": 1, "orderby": []})
+        if not rows:
+            return None
+        since = self._iso_date(rows[0].get("mn"))
+        until = self._iso_date(rows[0].get("mx"))
+        if since and until:
+            # make the upper bound inclusive of the last day
+            try:
+                until = (datetime.datetime.strptime(until, "%Y-%m-%d") + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+            return f"{since} : {until}"
+        return None
+
     def _build_rest_chart(self, spec: ChartSpec, schema: DatasetSchema):
         """Build (viz_type, form_data, query_context) for a REST-only chart.
         query_context is stored so the chart renders deterministically."""
@@ -207,6 +349,9 @@ class ChartAgent:
         primary_dim = spec.dimension or dims[0]
         row_limit = spec.row_limit if (spec.row_limit and spec.row_limit > 0) else 100
         ds = f"{schema.id}__table"
+        # Filters to apply at the end; a viz branch may consume some (e.g. cal_heatmap
+        # turns temporal-range filters into a bounded time_range instead).
+        plan_filters = spec.filters
 
         if viz == "box_plot":
             form_data = {"viz_type": viz, "datasource": ds, "metrics": [metric],
@@ -232,10 +377,14 @@ class ChartAgent:
             target = spec.series_column or (dims[1] if len(dims) > 1 else primary_dim)
             form_data = {"viz_type": viz, "datasource": ds, "source": source, "target": target, "metric": metric}
             query = {"metrics": [metric], "columns": [source, target], "row_limit": 200, "orderby": [[label, False]]}
-        elif viz == "histogram":
-            # histogram bins a raw numeric column (no aggregate)
-            form_data = {"viz_type": viz, "datasource": ds, "column": col, "bins": 20, "row_limit": 10000}
-            query = {"columns": [col], "row_limit": 10000, "orderby": []}
+        elif viz == "histogram_v2":
+            # histogram_v2 bins a raw numeric column (no aggregate); optional groupby.
+            hist_col = spec.metric_column if (spec.metric_column and spec.metric_column != "*") else col
+            grp = [spec.dimension] if (spec.dimension and spec.dimension != hist_col) else []
+            form_data = {"viz_type": viz, "datasource": ds, "column": hist_col, "groupby": grp,
+                         "bins": "10", "normalize": False, "cumulative": False, "row_limit": 50000,
+                         "x_axis_format": ",d", "y_axis_format": "SMART_NUMBER"}
+            query = {"columns": [hist_col] + grp, "row_limit": 50000, "orderby": []}
         elif viz == "bubble_v2":
             count_m = {"expressionType": "SIMPLE", "column": {"column_name": col},
                        "aggregate": "COUNT", "label": f"COUNT({col})"}
@@ -250,13 +399,100 @@ class ChartAgent:
                          "entity": primary_dim, "row_limit": row_limit}
             query = {"metrics": qm, "columns": [primary_dim], "row_limit": row_limit, "orderby": []}
         elif viz == "heatmap_v2":
+            # Real eCharts heatmap: x_axis × groupby (a SINGLE category) matrix. When
+            # the x_axis is a temporal column, bucket it by the grain (e.g. errors by
+            # month × type) so it isn't one column per raw timestamp.
             x_ax = primary_dim
             grp = spec.series_column or (dims[1] if len(dims) > 1 else primary_dim)
-            form_data = {"viz_type": viz, "datasource": ds, "x_axis": x_ax, "groupby": [grp], "metric": metric}
-            query = {"metrics": [metric], "columns": [x_ax, grp], "row_limit": 5000, "orderby": []}
+            grain = spec.time_grain or ("P1D" if self._is_temporal(schema, x_ax) else None)
+            xcol = self._axis_col(x_ax, schema, grain)
+            form_data = {"viz_type": viz, "datasource": ds, "x_axis": xcol, "groupby": grp,
+                         "metric": metric, "row_limit": 50000, "normalize_across": "heatmap",
+                         "sort_x_axis": "alpha_asc", "sort_y_axis": "alpha_asc",
+                         "legend_type": "continuous", "linear_color_scheme": "superset_seq_1",
+                         "y_axis_format": "SMART_NUMBER"}
+            query = {"metrics": [metric], "columns": [xcol, grp], "row_limit": 50000, "orderby": []}
+        elif viz == "country_map":
+            # Choropleth — value shaded per state/region; prefer an ISO-coded column.
+            entity = self._region_col(schema, primary_dim) or primary_dim
+            form_data = {"viz_type": viz, "datasource": ds, "entity": entity,
+                         "select_country": "nigeria", "metric": metric,
+                         "linear_color_scheme": "schemeMagma", "number_format": "SMART_NUMBER"}
+            query = {"metrics": [metric], "columns": [entity], "row_limit": 1000,
+                     "orderby": [[label, False]]}
+        elif viz == "cal_heatmap":
+            # Calendar heatmap — a metric per day across a month/year grid. The viz
+            # REQUIRES bounded time (Since AND Until) or it errors "Please provide both
+            # time bounds". Use the plan's date-range filters if present, else the
+            # dataset's actual min/max so the calendar spans the real data.
+            tcol = self._time_col(schema, spec.time_column or primary_dim)
+            if not tcol or not self._is_temporal(schema, tcol):
+                raise ValueError("cal_heatmap requires a temporal column")
+            time_range, plan_filters = self._extract_time_range(spec.filters, tcol)
+            if not time_range:
+                time_range = self._data_time_range(schema, tcol)
+            if not time_range:
+                # cal_heatmap errors without Since AND Until — never leave it unbounded;
+                # drop the chart so the pipeline can fall back instead of rendering broken.
+                raise ValueError("cal_heatmap needs a bounded time_range (no filters / probe failed)")
+            form_data = {"viz_type": viz, "datasource": ds, "granularity_sqla": tcol,
+                         "time_range": time_range, "domain_granularity": "month",
+                         "subdomain_granularity": "day", "metrics": [metric],
+                         "cell_size": 10, "cell_padding": 2, "steps": 10,
+                         "linear_color_scheme": "superset_seq_1"}
+            query = {"metrics": [metric], "columns": [], "granularity": tcol,
+                     "time_range": time_range, "row_limit": 1000, "orderby": []}
+            log.info("cal_heatmap '%s': time_range=%s", spec.name, time_range)
+        elif viz == "echarts_timeseries_smooth":
+            # Smooth (curved) line time series. Bucket by grain only when the x-axis is
+            # actually temporal; otherwise plot the line over the plain column.
+            tcol = self._time_col(schema, spec.time_column or primary_dim) \
+                or primary_dim or next(iter(schema.columns), "")
+            grain = spec.time_grain or "P1D"
+            xcol = self._axis_col(tcol, schema, grain)
+            grp = [spec.series_column] if (spec.series_column and spec.series_column != tcol) else []
+            form_data = {"viz_type": viz, "datasource": ds, "x_axis": xcol, "metrics": metrics,
+                         "groupby": grp, "row_limit": row_limit, "show_legend": True}
+            if self._is_temporal(schema, tcol):
+                form_data["time_grain_sqla"] = grain
+            query = {"metrics": metrics, "columns": [xcol] + grp,
+                     "series_columns": grp, "row_limit": row_limit, "orderby": []}
+        elif viz == "deck_screengrid":
+            # Geospatial density — needs latitude/longitude columns + a Mapbox token.
+            lat, lon = self._geo_cols(schema)
+            if not (lat and lon):
+                raise ValueError("deck_screengrid requires latitude/longitude columns")
+            size_m = {"expressionType": "SIMPLE", "column": {"column_name": lat},
+                      "aggregate": "COUNT", "label": f"COUNT({lat})"}
+            form_data = {"viz_type": viz, "datasource": ds,
+                         "spatial": {"type": "latlong", "latCol": lat, "lonCol": lon},
+                         "size": size_m, "row_limit": 10000, "grid_size": 20,
+                         "mapbox_style": "mapbox://styles/mapbox/light-v9", "autozoom": True,
+                         "viewport": {"bearing": 0, "latitude": 9.08, "longitude": 8.68,
+                                      "pitch": 0, "zoom": 5},
+                         "color_picker": {"a": 1, "r": 0, "g": 122, "b": 135}, "js_columns": []}
+            query = {"metrics": [size_m], "columns": [lat, lon], "row_limit": 10000, "orderby": [],
+                     "filters": [{"col": lat, "op": "IS NOT NULL"},
+                                 {"col": lon, "op": "IS NOT NULL"}]}
         else:  # treemap_v2, funnel
             form_data = {"viz_type": viz, "datasource": ds, "metric": metric, "groupby": dims, "row_limit": row_limit}
             query = {"metrics": [metric], "columns": dims, "row_limit": row_limit, "orderby": [[label, False]]}
+
+        # Propagate plan filters (date ranges, status='COMPLETED', amount>1000, …).
+        # The MCP path applies these via config; the REST path must add them to BOTH
+        # the stored query_context (which drives rendering) and form_data.adhoc_filters
+        # (so they also show in the Explore UI). Without this, a chart titled e.g.
+        # "Jan–Mar 2026" would silently render all-time data.
+        rest_filters = self._normalise_filters(plan_filters)
+        if rest_filters:
+            # Superset's query_context + adhoc filters use "==" for equality, while
+            # the MCP format (_normalise_filters) uses "=". Map it for both.
+            conv = [{**f, "op": ("==" if f["op"] == "=" else f["op"])} for f in rest_filters]
+            query["filters"] = (query.get("filters") or []) + conv
+            adhoc = [{"clause": "WHERE", "expressionType": "SIMPLE", "subject": f["col"],
+                      "operator": f["op"], "comparator": f["val"]} for f in conv]
+            form_data["adhoc_filters"] = (form_data.get("adhoc_filters") or []) + adhoc
+            log.info("REST chart '%s': applied %d filter(s): %s", spec.name, len(conv), conv)
 
         query_context = {"datasource": {"id": schema.id, "type": "table"}, "force": False,
                          "result_format": "json", "result_type": "full",
@@ -443,8 +679,9 @@ class ChartAgent:
                 "name": spec.time_column,
                 "dtype": col_type,
             }
-            config["time_grain"] = "PT1M"
-            log.info("XY chart '%s': time-series x=%s grain=PT1M", spec.name, spec.time_column)
+            grain = spec.time_grain or "P1D"
+            config["time_grain"] = grain
+            log.info("XY chart '%s': time-series x=%s grain=%s", spec.name, spec.time_column, grain)
 
             # series_column drives the group_by (e.g. "type" for DEPOSIT/WITHDRAWAL)
             if spec.series_column and spec.series_column != spec.time_column:
@@ -496,7 +733,7 @@ class ChartAgent:
             "secondary_kind": "line",
         }
         if any(t in col_type.upper() for t in ("TIMESTAMP", "DATETIME", "DATE", "TIME")):
-            config["time_grain"] = "P1D"
+            config["time_grain"] = spec.time_grain or "P1D"
 
         extra = spec.extra_metrics or []
         if extra and isinstance(extra[0], dict):

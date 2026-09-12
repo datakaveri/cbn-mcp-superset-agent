@@ -35,12 +35,13 @@ RESPONSE FORMAT:
   "charts": [
     {{
       "name": "chart display name",
-      "chart_type": "bar|stacked_bar|line|area|scatter|pie|donut|table|pivot_table|heatmap|big_number|big_number_total|combo|box_plot|funnel|treemap|sunburst|waterfall|gauge|radar|sankey|histogram|bubble",
+      "chart_type": "bar|stacked_bar|line|area|scatter|pie|donut|table|pivot_table|heatmap|big_number|big_number_total|combo|box_plot|funnel|treemap|sunburst|waterfall|gauge|radar|sankey|histogram|bubble|smooth_line|cal_heatmap|country_map|deck_screengrid",
       "metric": "SUM(<numeric_col>)",
       "metric_column": "<numeric_col>",
       "aggregate": "SUM",
       "dimension": "<group_by_col>",
       "time_column": null,
+      "time_grain": null,
       "stack": false,
       "row_limit": null,
       "series_column": null,
@@ -71,6 +72,11 @@ IMPORTANT:
   and "metric" to a matching list — the chart then renders one series per measure.
 - aggregate must be the SQL function name (e.g. "SUM", "COUNT", "AVG", "MIN", "MAX")
 - time_column should be a real temporal/timestamp column, set only for time-series charts (line, area)
+- time_grain: for time-series charts, set the bucket size matching the request, as an
+  ISO 8601 duration — PT1M=minute, PT1H=hour, P1D=day, P1W=week, P1M=MONTH, P1Y=year
+  (note PT1M is a minute, P1M is a month). If the user asks for the SAME data at
+  multiple granularities (e.g. "errors per minute, day, week and month"), emit one
+  chart PER granularity with the matching time_grain. Default to P1D when unspecified.
 - dimension is the primary GROUP BY column (shown on X axis or as slices)
 - series_column: set this to split bars/lines by a second dimension (grouped/stacked series)
 - stack: set true for stacked_bar or stacked_area charts
@@ -81,7 +87,7 @@ IMPORTANT:
   * val for numeric comparisons must be a number, not a string
 - Only filter on columns that actually exist in the chosen dataset
 - For "top N" requests, set row_limit=N and do NOT add a filter for it
-- For heatmap charts: dimension = the ROW axis, series_column = the COLUMN axis. Always set series_column for heatmaps. (Rendered as a pivot matrix.)
+- For heatmap charts: dimension = the X axis, series_column = the second category. Always set series_column for heatmaps. (Rendered as a real eCharts heatmap; use pivot_table instead when the user wants a numeric grid with row/column totals.)
 - Use "combo" for a dual-axis time series comparing two measures of different scales
   (e.g. transaction COUNT as bars + AVG amount as a line): set time_column, the
   primary metric, and one extra metric in extra_metrics.
@@ -94,6 +100,19 @@ IMPORTANT:
   target); compare a few categories across several measures → radar (put the measures
   in extra_metrics); relationship between measures → bubble (extra_metrics give the
   y and size axes).
+- More chart types (use ONLY when the data supports them):
+  * smooth_line → a curved-line time series (set time_column + metric); use it
+    instead of "line" when the user asks for a smooth/trend curve.
+  * cal_heatmap → a calendar heatmap of a metric per day (set time_column = a real
+    DATE/TIMESTAMP column + metric, e.g. COUNT). Good for "activity by day".
+  * country_map → a Nigeria choropleth shaded by a measure per state/region. ONLY
+    pick this when the dataset HAS a state/region/ISO column. Set dimension to the
+    ISO-code column when one exists (e.g. iso_code, stateISO — the map matches on
+    NG-XX ISO codes, not state names); otherwise the state/region name column.
+    metric = the measure.
+  * deck_screengrid → a geospatial density map. ONLY pick this when the dataset HAS
+    latitude AND longitude columns; set dimension to a geo column and metric=COUNT(*).
+    Never pick it for datasets without lat/long.
 """
 
 REFINEMENT_SYSTEM_PROMPT = """You are correcting a Superset dashboard plan based on actual dataset schema.
@@ -290,6 +309,31 @@ Please fix the plan to use only valid column names and correct any issues."""
 
     # ── Internal helpers ──────────────────────────────────────────────
 
+    # Time-grain normalisation — accept ISO 8601 durations or plain English words.
+    # NOTE: PT1M = 1 MINUTE, P1M = 1 MONTH (a common confusion).
+    _VALID_GRAINS = {"PT1S", "PT1M", "PT5M", "PT10M", "PT15M", "PT30M",
+                     "PT1H", "P1D", "P1W", "P1M", "P3M", "P1Y"}
+    _GRAIN_WORDS = {
+        "second": "PT1S", "secondly": "PT1S",
+        "minute": "PT1M", "minutely": "PT1M", "min": "PT1M", "per minute": "PT1M",
+        "hour": "PT1H", "hourly": "PT1H", "per hour": "PT1H",
+        "day": "P1D", "daily": "P1D", "per day": "P1D",
+        "week": "P1W", "weekly": "P1W", "per week": "P1W",
+        "month": "P1M", "monthly": "P1M", "per month": "P1M",
+        "quarter": "P3M", "quarterly": "P3M",
+        "year": "P1Y", "yearly": "P1Y", "annual": "P1Y", "annually": "P1Y",
+    }
+
+    @classmethod
+    def _norm_grain(cls, v) -> Optional[str]:
+        """Normalise an LLM time_grain (ISO duration or English word) → ISO, or None."""
+        if not v:
+            return None
+        s = str(v).strip()
+        if s.upper() in cls._VALID_GRAINS:
+            return s.upper()
+        return cls._GRAIN_WORDS.get(s.lower())
+
     @staticmethod
     def _parse_plan(data: dict | list) -> Optional[PipelinePlan]:
         """Parse an LLM response into a PipelinePlan."""
@@ -333,6 +377,7 @@ Please fix the plan to use only valid column names and correct any issues."""
                     aggregate=agg,
                     dimension=dim,
                     time_column=c.get("time_column"),
+                    time_grain=Orchestrator._norm_grain(c.get("time_grain")),
                     filters=c.get("filters"),
                     stack=bool(c.get("stack", False)),
                     row_limit=c.get("row_limit"),
@@ -367,6 +412,7 @@ Please fix the plan to use only valid column names and correct any issues."""
                     "aggregate": c.aggregate,
                     "dimension": c.dimension,
                     "time_column": c.time_column,
+                    "time_grain": c.time_grain,
                     "stack": c.stack,
                     "row_limit": c.row_limit,
                     "series_column": c.series_column,

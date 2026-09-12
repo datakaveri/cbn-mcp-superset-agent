@@ -28,7 +28,9 @@ natural-language questions a business user would ask — each mapping to real
 columns of ONE dataset. VARY the analysis type across the set, since the agent can
 build many chart kinds: a trend over time, a top-N ranking, a breakdown/share, a
 comparison of two measures over time, a distribution/spread of a numeric column, a
-flow between two categories, a hierarchy/part-of-whole, and a single KPI. Keep each
+flow between two categories, a hierarchy/part-of-whole, a single KPI, and — WHEN the
+columns support it — a geographic breakdown by state/region (only if a state/region
+column exists) or activity-by-day (only if a date/time column exists). Keep each
 under ~14 words, no IDs/jargon.
 Respond ONLY with JSON: {"suggestions": ["...", "..."]}"""
 
@@ -36,8 +38,9 @@ _FOLLOWUP_SYSTEM = """You suggest follow-up questions to ADD complementary chart
 existing dashboard. Given the dataset profile and the charts already on it,
 propose SHORT next questions that add a DIFFERENT view — vary the angle AND the
 chart kind (another dimension or measure, a time trend, a distribution/spread, a
-flow, a hierarchy/part-of-whole, or a single KPI) — do not duplicate existing
-charts. Prefer low-cardinality columns as dimensions and never aggregate NULLABLE
+flow, a hierarchy/part-of-whole, a single KPI, a geographic breakdown if a
+state/region column exists, or activity-by-day if a date column exists) — do not
+duplicate existing charts. Prefer low-cardinality columns as dimensions and never aggregate NULLABLE
 columns. Respond ONLY with JSON: {"suggestions": ["...", "..."]}"""
 
 
