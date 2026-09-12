@@ -133,12 +133,14 @@ All settings are read from environment variables with sensible defaults. A `.env
 | `MCP_AUTH_TOKEN` | _(none)_ | **Required for the hosted MCP.** Bearer token sent as `Authorization: Bearer …` on every MCP request. |
 | `MCP_DEV_USERNAME` | `admin` | Username used by the MCP service (must match `superset_config.py`) |
 | `APP_BASE_PATH` | _(empty)_ | Sub-path the web UI is served under behind a proxy, e.g. `/chatbot`. Injects `<base>` so auth/API/assets resolve under the prefix. Empty = served at root. |
-| `OPENAI_API_KEY` | _(none)_ | **Required.** OpenAI API key (sent as `Authorization: Bearer`). `LLM_API_KEY` is also accepted. |
-| `LLM_BASE_URL` | `https://api.openai.com/v1` | Base URL of the OpenAI-compatible API |
+| `OPENAI_API_KEY` | _(none)_ | **Required.** API key for the LLM endpoint, sent as `Authorization: Bearer`. An OpenAI key, or an Amazon Bedrock API key when using Bedrock Mantle. `LLM_API_KEY` is also accepted. |
+| `OPENAI_PROJECT_ID` | _(none)_ | Optional project ID, sent as the `OpenAI-Project` header. On Bedrock Mantle it attributes requests to a Bedrock project; omit it to use the account's default project. `LLM_PROJECT_ID` is also accepted. |
+| `LLM_BASE_URL` | `https://api.openai.com/v1` | Base URL of the OpenAI-compatible API. Bedrock Mantle: `https://bedrock-mantle.<region>.api.aws/openai/v1` |
 | `LLM_GENERATE_PATH` | `/chat/completions` | Path to the chat-completions endpoint |
-| `LLM_MODEL` | `gpt-5.5` | Model name to pass to the LLM |
+| `LLM_MODEL` | `gpt-5.5` | Model name to pass to the LLM. GPT-5.6 Luna on Bedrock Mantle is `openai.gpt-5.6-luna` |
 | `LLM_TIMEOUT` | `600` | LLM request timeout in seconds |
 | `LLM_TEMPERATURE` | _(unset)_ | Optional sampling temperature; omitted by default to use the model default |
+| `LLM_MAX_TOKENS` | `16000` | Output-token cap, sent as `max_completion_tokens`. Reasoning models count reasoning toward it, so keep it generous. `0` omits the cap. |
 | `KEYCLOAK_ENABLED` | `true` | Gate the web UI behind Keycloak login. Set `false` to disable auth (local dev only). |
 | `KEYCLOAK_URL` | `https://keycloak.idx-ng.com/auth` | Keycloak base URL (same as ui-cbn) |
 | `KEYCLOAK_REALM` | `cbn` | Keycloak realm |
@@ -161,7 +163,16 @@ OPENAI_API_KEY=sk-...
 LLM_MODEL=gpt-5.5
 ```
 
-> **Note:** `.env` holds secrets (MCP token, OpenAI key) and is gitignored — never commit it.
+To use GPT-5.6 Luna on Amazon Bedrock Mantle instead of OpenAI (us-east-1):
+
+```bash
+LLM_BASE_URL=https://bedrock-mantle.us-east-1.api.aws/openai/v1
+LLM_MODEL=openai.gpt-5.6-luna
+OPENAI_API_KEY=<Bedrock API key>
+OPENAI_PROJECT_ID=<Bedrock project id>   # optional; omit for the default project
+```
+
+> **Note:** `.env` holds secrets (MCP token, LLM API key) and is gitignored — never commit it.
 
 ---
 

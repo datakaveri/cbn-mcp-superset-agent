@@ -63,14 +63,29 @@ KEYCLOAK_CLIENT_ID = os.getenv("KEYCLOAK_CLIENT_ID", "angular-client")
 # Optional: require a specific realm role to use the UI. Empty = any authenticated user.
 KEYCLOAK_REQUIRED_ROLE = os.getenv("KEYCLOAK_REQUIRED_ROLE", "")
 
-# ── LLM (OpenAI) ──────────────────────────────────────────────────────
-# Defaults target OpenAI's hosted chat-completions API.
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
-LLM_GENERATE_PATH = os.getenv("LLM_GENERATE_PATH", "/chat/completions")
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-5.5")
-LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "600"))
+# ── LLM (OpenAI-compatible) ───────────────────────────────────────────
+# Defaults target OpenAI's hosted chat-completions API. Any OpenAI-compatible
+# endpoint works by env alone. For Amazon Bedrock Mantle (us-east-1):
+#   LLM_BASE_URL=https://bedrock-mantle.us-east-1.api.aws/openai/v1
+#   LLM_MODEL=openai.gpt-5.6-luna
+#   OPENAI_API_KEY=<Bedrock API key>   OPENAI_PROJECT_ID=<Bedrock project id>
+def _env(name: str, default: str = "") -> str:
+    """os.getenv with surrounding whitespace removed. Docker's env_file keeps a
+    trailing space literally (python-dotenv strips it), so a stray space after a
+    URL or model id would otherwise break LLM calls only inside the container."""
+    return (os.getenv(name) or default).strip()
+
+
+LLM_BASE_URL = _env("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+LLM_GENERATE_PATH = _env("LLM_GENERATE_PATH", "/chat/completions")
+LLM_MODEL = _env("LLM_MODEL", "gpt-5.5")
+LLM_TIMEOUT = int(_env("LLM_TIMEOUT", "600"))
 # API key — OPENAI_API_KEY is the conventional name; LLM_API_KEY is also accepted.
-LLM_API_KEY = os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY", "")
+LLM_API_KEY = _env("OPENAI_API_KEY") or _env("LLM_API_KEY")
+# Optional project ID, sent as the OpenAI-Project header. Bedrock Mantle uses it
+# to attribute requests to a Bedrock project; without it they go to the account's
+# default project. OPENAI_PROJECT_ID is the OpenAI SDK's name; LLM_PROJECT_ID works too.
+LLM_PROJECT_ID = _env("OPENAI_PROJECT_ID") or _env("LLM_PROJECT_ID")
 # Optional sampling temperature. Leave unset to use the model default
 # (some newer models only accept the default); set e.g. LLM_TEMPERATURE=0 to pin it.
 _llm_temp = os.getenv("LLM_TEMPERATURE")
